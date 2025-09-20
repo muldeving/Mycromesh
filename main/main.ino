@@ -1472,16 +1472,20 @@ void onReceive(int packetSize) {
           pcount++;
         }
         addValue(getValue(incoming, ':', 1));
-        delay(300*localAddress);
-        sendMessage(1, incoming, 0);
+        String rumap = "trsm:";
+        rumap += "0:";
+        rumap += incoming;
+        scheduleCommand((300*localAddress), rumap); 
     }
   }
     
     if(getValue(incoming, ':', 0) == "ping"){    
       Serial.println("Snr: " + String(LoRa.packetRssi()));
-      delay(300*localAddress); 
-      sendMessage(0, "rpin:" + String(LoRa.packetRssi()), sender);
-      delay(100);                            // skip rest of function
+      String rping = "trsms:";
+      rping += String(sender);
+      rping += ":rpin:";
+      rping += String(LoRa.packetRssi());
+      scheduleCommand((300*localAddress), rping);                         // skip rest of function
     }        
     if(getValue(incoming, ':', 0) == "difh"){
       if (!findValue(getValue(incoming, ':', 1))) {
@@ -1749,16 +1753,20 @@ void interpreter(String msg){
     Serial.println(msg.substring(5, msg.length()));
   }
     if(cmd == "trsm"){
-     delay(500);
+     delay(50);
      sendMessage(1, msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
-     Serial.println(msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()));
-     Serial.println((getValue(msg, ':', 1)).toInt());
+  }
+  if(cmd == "trsms"){
+      delay(50);
+     sendMessage(0, msg.substring(6+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
   }
     if(cmd == "ping"){    
       Serial.println("Snr: " + String(LoRa.packetRssi()));
-      delay(300*localAddress); 
-      sendMessage(0, "rpin:" + String(LoRa.packetRssi()), sender);
-      delay(100);  
+      String rping = "trsms:";
+      rping += String(sender);
+      rping += ":rpin:";
+      rping += String(LoRa.packetRssi());
+      scheduleCommand((300*localAddress), rping);
     }    
     if(cmd == "rpin"){
       Serial.println("-----------------------------------------");
@@ -1809,14 +1817,14 @@ void interpreter(String msg){
         Serial.println(tempinload.length());
         Serial.println(getValue(msg, ':', 4));
         Serial.println(tempinload);
-        String rxok = "rxok:";
+        String rxok = "trsms:";
+        rxok += getValue(msg, ':', 2);
+        rxok += ":rxok:";
         rxok += getValue(msg, ':', 4);
         rxok += ":";
         rxok += localAddress;
-        if(tempinload.length() == getValue(msg, ':', 3).toInt()){          
-          delay(200);
-          sendMessage(0, rxok, (getValue(msg, ':', 2)).toInt());
-          delay(50);
+        if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
+          scheduleCommand(500, rxok);
           if(getValue(msg, ':', 1).toInt() == localAddress){            
             interpreter(tempinload); // execution commande
           }
@@ -1863,7 +1871,6 @@ void interpreter(String msg){
       
     }
     if(cmd == "load"){
-      delay(100);
       String tempinload = msg.substring((5+9+(getValue(msg, ':', 1).length())+(getValue(msg, ':', 2).length())+2), msg.length());
       Serial.println(getValue(msg, ':', 2));
       Serial.println(tempinload.length());
@@ -1877,7 +1884,6 @@ void interpreter(String msg){
       rxok += localAddress;
       if(tempinload.length() == getValue(msg, ':', 2).toInt()){
         scheduleCommand(1500, rxok);
-        delay(100);
         interpreter(tempinload); // execution commande
       }
     }
