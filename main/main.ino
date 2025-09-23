@@ -1351,7 +1351,7 @@ void loop() {
     startprocedure();
   }
 
-  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
+  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 15) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
     exportcache();
   }
@@ -1736,6 +1736,11 @@ void changepval(String parn, String parv){
     actiontimerdel = parv.toInt();
     Serial.print("actiontimerdel:");
     Serial.println(actiontimerdel);
+  }
+  if(parn == "TOGATE_COMMAND_TIMEOUT"){
+    TOGATE_COMMAND_TIMEOUT = parv.toInt();
+    Serial.print("TOGATE_COMMAND_TIMEOUT:");
+    Serial.println(TOGATE_COMMAND_TIMEOUT);
   }
 }
 
