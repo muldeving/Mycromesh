@@ -75,6 +75,7 @@ unsigned long actiontimer = 0;
 unsigned long sleeptimer = 0;
 int stationstat = 0;
 const int MAX_COMMANDS = 10;
+int nbtogatefail = 0;
 
 // Tableaux
 
@@ -163,7 +164,10 @@ void togatePurgeOld() {
       Serial.print("ctg to sd : ");      
       Serial.println(togateQueue[i].command);
       prefs.putBool("incache", true);
-      prefs.putBool("isgateonline", false);
+      nbtogatefail ++;
+      if (nbtogatefail >= 5){        
+        prefs.putBool("isgateonline", false);
+      }
 
       delay(50);
       LoRa.setFrequency(433.1);
@@ -210,7 +214,8 @@ bool togateRemoveById(int id) {
       Serial.print(togateQueue[i].command);
       Serial.println("\"");      
       prefs.putBool("isgateonline", true);
-
+      ltgdel = (millis()/1000);
+      nbtogatefail = 0;
       // Décaler les éléments suivants
       for (int j = i; j < togateCount - 1; j++) {
         togateQueue[j] = togateQueue[j + 1];
@@ -1351,7 +1356,7 @@ void loop() {
     startprocedure();
   }
 
-  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 15) || ltgdel > (millis()/1000))){
+  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 5) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
     exportcache();
   }
