@@ -48,6 +48,7 @@ const int MAX_ENTRIES = 10;     // Nombre maximum d'entrées
 const int MAX_PINGS = 10;       // Nombre maximum d'entrées
 const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
+const int MAX_TOGATE_COMMANDS_FILE = 20;
 
 const int csPin = 21;          // LoRa radio chip select
 const int resetPin = -1;       // LoRa radio reset
@@ -76,6 +77,9 @@ unsigned long sleeptimer = 0;
 int stationstat = 0;
 const int MAX_COMMANDS = 10;
 int nbtogatefail = 0;
+unsigned long ltgdelfile = 0;
+int nbtogatefailfile = 0;
+int togateCountFile = 0;
 
 // Tableaux
 
@@ -94,6 +98,14 @@ struct TogateCommand {
 
 TogateCommand togateQueue[MAX_TOGATE_COMMANDS];
 int togateCount = 0;
+
+struct TogateCommandFile {
+  int id;
+  String command;
+  unsigned long timestamp;
+};
+
+TogateCommandFile togateQueueFile[MAX_TOGATE_COMMANDS_FILE];
 
 struct Data {
   String value;        // La valeur de type String stockée
@@ -165,7 +177,7 @@ void togatePurgeOld() {
       Serial.println(togateQueue[i].command);
       prefs.putBool("incache", true);
       nbtogatefail ++;
-      if (nbtogatefail >= 5){        
+      if (nbtogatefail >= 5 && prefs.getBool("isgateonline", 0) == 1){        
         prefs.putBool("isgateonline", false);
       }
 
@@ -230,6 +242,127 @@ bool togateRemoveById(int id) {
   Serial.println(" trouvé.");
   return false;
 }
+
+// Ajouter une commande à la file d'export de fichier
+void togateAddCommandFile(int id, String command) {
+  // Vérifier si l'ID existe déjà
+  for (int i = 0; i < togateCountFile; i++) {
+    if (togateQueueFile[i].id == id) {
+      Serial.print("[TogateFile] ID ");
+      Serial.print(id);
+      Serial.println(" existe déjà, mise à jour ignorée.");
+      return;
+    }
+  }
+
+  // Ajouter la nouvelle commande
+  if (togateCountFile < MAX_TOGATE_COMMANDS_FILE) {
+    togateQueueFile[togateCountFile].id = id;
+    togateQueueFile[togateCountFile].command = command;
+    togateQueueFile[togateCountFile].timestamp = millis();
+    togateCountFile++;
+    
+    Serial.print("[TogateFile] Ajout commande : ID=");
+    Serial.print(id);
+    Serial.print(", Commande=\"");
+    Serial.print(command);
+    Serial.println("\"");
+  } else {
+    Serial.println("[TogateFile] Erreur : file de commandes pleine.");
+  }
+}
+
+// Supprimer une commande par son ID (file exportfile)
+bool togateRemoveByIdFile(int id) {
+  for (int i = 0; i < togateCountFile; i++) {
+    if (togateQueueFile[i].id == id) {
+      Serial.print("[TogateFile] Suppression par ID : ID=");
+      Serial.print(togateQueueFile[i].id);
+      Serial.print(", Commande=\"");
+      Serial.print(togateQueueFile[i].command);
+      Serial.println("\"");
+      
+      prefs.putBool("isfdeson", true);
+      ltgdelfile = (millis()/1000);
+      nbtogatefailfile = 0;
+      
+      // Décaler les éléments suivants
+      for (int j = i; j < togateCountFile - 1; j++) {
+        togateQueueFile[j] = togateQueueFile[j + 1];
+      }
+      togateCountFile--;
+      return true;
+    }
+  }
+
+  Serial.print("[TogateFile] Aucun ID correspondant à ");
+  Serial.print(id);
+  Serial.println(" trouvé.");
+  return false;
+}
+
+// Remettre les commandes expirées dans tx.txt
+void purgeToOldFile() {
+  unsigned long currentTime = millis();
+  bool hasExpired = false;
+  String linesToRestore = "";
+  
+  for (int i = 0; i < togateCountFile; i++) {
+    if (currentTime - togateQueueFile[i].timestamp >= TOGATE_COMMAND_TIMEOUT) {
+      Serial.print("[TogateFile] Commande expirée : ID=");
+      Serial.print(togateQueueFile[i].id);
+      Serial.println(", remise dans tx.txt");
+      
+      linesToRestore += togateQueueFile[i].command;
+      linesToRestore += "\n";
+      
+      nbtogatefailfile++;
+      hasExpired = true;
+      
+      // Décaler les éléments suivants
+      for (int j = i; j < togateCountFile - 1; j++) {
+        togateQueueFile[j] = togateQueueFile[j + 1];
+      }
+      togateCountFile--;
+      i--; // Revérifier cet index
+    }
+  }
+  
+  if (hasExpired && linesToRestore.length() > 0) {
+    // Écrire les lignes expirées dans tx.txt
+    delay(50);
+    LoRa.setFrequency(433.1);
+    SPI.transfer(0);
+    digitalWrite(csPin, 1);
+    digitalWrite(20, 0);
+    delay(100);
+    
+    if (!SD.begin(7)) {
+      Serial.println("[PurgeFile] Erreur SD");
+    } else {
+      File myFile = SD.open("/tx.txt", FILE_APPEND);
+      if (myFile) {
+        myFile.print(linesToRestore);
+        myFile.close();
+        Serial.println("[PurgeFile] Lignes restaurées dans tx.txt");
+      } else {
+        Serial.println("[PurgeFile] Erreur ouverture tx.txt");
+      }
+    }
+    
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+  }
+  
+  // Si trop d'échecs, marquer la gate comme hors ligne
+  if (nbtogatefailfile >= 3 && prefs.getBool("isfdeson", 0) == 1) {
+    prefs.putBool("isfdeson", false);
+    Serial.println("[TogateFile] Gate marquée hors ligne (trop d'échecs).");
+  }
+}
+
 
 // Fonction pour ajouter une nouvelle entrée
 void addPingEntry(int nbtoping, int nbping) {
@@ -1272,6 +1405,124 @@ bool exportcache() {
  
 }
 
+bool exportfile() {
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin, 1);
+  digitalWrite(20, 0);
+  delay(100);
+  
+  if (!SD.begin(7)) {
+    Serial.println("PBsd");
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    return false;
+  }
+  
+  File fichier = SD.open("/tx.txt", FILE_READ);
+  if (!fichier) {
+    Serial.println("Fichier introuvable.");
+    prefs.putBool("infilecache", false);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    return false;
+  }
+
+  uint32_t offsetfile = prefs.getUInt("offsetfile", 0);
+  if (offsetfile >= fichier.size()) {
+    fichier.close();
+    Serial.println("Fin fichier cache");
+    SD.remove("/tx.txt");
+    prefs.remove("offsetfile");
+    prefs.putBool("infilecache", false);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    return false;
+  }
+
+  fichier.seek(offsetfile);
+
+  char ligne[TAILLE_TAMPON];
+  int index = 0;
+  bool ligneTrouvee = false;
+
+  while (fichier.available()) {
+    char c = fichier.read();
+    offsetfile++;
+
+    if (c == '\n' || index >= TAILLE_TAMPON - 1) {
+      ligne[index] = '\0';
+      ligneTrouvee = true;
+      break;
+    } else if (c != '\r') {
+      ligne[index++] = c;
+    }
+  }
+
+  fichier.close();
+
+  if (ligneTrouvee || index > 0) {
+    ligne[index] = '\0';
+    
+    prefs.putUInt("offsetfile", offsetfile);
+    
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    
+    String ligneStr = String(ligne);
+    if (ligneStr.length() > 0) {
+      Serial.print("Ligne exportée : ");
+      Serial.println(ligneStr);
+      
+      // Extraire l'ID de la commande (format identique à exportcache)
+      int tempid = getValue(ligneStr, ':', 5).toInt();
+      togateAddCommandFile(tempid, ligneStr);
+      
+      // Passer la ligne à l'interpréteur
+      interpreter(ligneStr);
+      return true;
+    }
+  }
+
+  digitalWrite(csPin, 0);
+  digitalWrite(20, 1);
+  LoRa.setPins(csPin, resetPin, irqPin);
+  LoRa.begin(433E6);
+  return false;
+}
+
+void importfile(String file, String input){
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  if (!SD.begin(7)) {Serial.println("PBsd");}
+  File myFile;
+  myFile = SD.open(file, FILE_APPEND);   
+  if (myFile) {
+    myFile.println(input);
+    myFile.close();
+  }
+  else{
+    Serial.println("PBfile");
+  }
+  digitalWrite(csPin,0);
+  digitalWrite(20,1);
+  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+  LoRa.begin(433E6); 
+}
+
 void setup() {
   Serial.begin(9600);                   // initialize serial
   while (!Serial);
@@ -1361,6 +1612,11 @@ void loop() {
     exportcache();
   }
 
+  if(prefs.getBool("infilecache", 0) == true && prefs.getBool("isfdeson", 0) == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 5) || ltgdelfile > (millis()/1000))){
+    ltgdelfile = (millis()/1000);
+    exportfile();
+  }
+
   if(pingphase == 0 && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
@@ -1385,6 +1641,7 @@ void loop() {
   }
   executeCronTasks();
   togatePurgeOld();
+  purgeToOldFile();
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
@@ -1903,6 +2160,7 @@ void interpreter(String msg){
       Serial.print(" bien reçu par ");
       Serial.println(getValue(msg, ':', 2));
       togateRemoveById(getValue(msg, ':', 1).toInt());
+      togateRemoveByIdFile(getValue(msg, ':', 1).toInt());
     }
     if(cmd == "rxok"){
       Serial.print("Message ");
@@ -2102,5 +2360,48 @@ void interpreter(String msg){
     String cmd = getValue(msg, ':', 2);
     Serial.println(del);
     scheduleCommand(del, cmd);
+    }
+    if(cmd == "startfile"){
+      prefs.putBool("infilecache", true);
+      prefs.putBool("isfdeson", true);
+      prefs.putUInt("offsetfile", 0);
+      nbtogatefailfile = 0;
+      Serial.println("Export fichier tx.txt démarré");
+    }
+    if(cmd == "filestate"){
+      Serial.print("infilecache:");
+      Serial.println(prefs.getBool("infilecache", 0));
+      Serial.print("isfdeson:");
+      Serial.println(prefs.getBool("isfdeson", 0));
+      Serial.print("togateCountFile:");
+      Serial.println(togateCountFile);
+    }
+    if(cmd == "expfile"){
+      exportfile();
+    }  
+    if(cmd == "file"){
+      Serial.println(msg.substring(5, msg.length()));
+      importfile("/rx.txt", msg.substring(5, msg.length()));
+    }
+    if(cmd == "mktx"){
+      int nbtours = getValue(msg, ':', 1).toInt();
+      Serial.println(nbtours);
+      for (int i = 0; i < nbtours; ) {
+        i++;
+        Serial.println(i);
+        String togate = "file:Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur tincidunt rutrum tempus. Cras at.";
+        String tempid = generateid();
+        String load = "send:";
+        load += stationgateway;
+        load += ":load:";
+        load += localAddress;
+        load += ":";
+        load += togate.length();
+        load += ":";
+        load += tempid;
+        load += ":";
+        load += togate;
+        importfile("/tx.txt", load);
+      }
     }
 }
