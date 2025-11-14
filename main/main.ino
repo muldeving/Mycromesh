@@ -1624,8 +1624,13 @@ void loop() {
       writetosd();
       LoRa.receive();
       delay(100);
-      Serial.println("Going to sleep now");
-      esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
+      int nextwup = nextWakeup() - 5;
+      Serial.println("Going to sleep now");    
+      Serial.print("Next wakeup : ");  
+      Serial.println(nextwup);
+      if(nextwup > 0){        
+        esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
+      }
       esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
       gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
       esp_deep_sleep_start();      
