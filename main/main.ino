@@ -56,6 +56,7 @@ const int irqPin = 8;          // change for your board; must be a hardware inte
 
 // variables systeme
 
+int filereceivientstation = 0;
 unsigned long ltgdel = 0;
 bool sensorstart = false;
 int lastMinuteChecked = -1;
@@ -1484,11 +1485,23 @@ bool exportfile() {
       Serial.println(ligneStr);
       
       // Extraire l'ID de la commande (format identique à exportcache)
-      int tempid = getValue(ligneStr, ':', 5).toInt();
-      togateAddCommandFile(tempid, ligneStr);
-      
-      // Passer la ligne à l'interpréteur
-      interpreter(ligneStr);
+      String tempid = generateid();
+      togateAddCommandFile(tempid.toInt(), ligneStr);
+
+      String outglignestr = "file:";
+      outglignestr += ligneStr;
+      // Passer la ligne à l'interpréteur      
+      String load = "send:";
+      load += filereceivientstation;
+      load += ":load:";
+      load += localAddress;
+      load += ":";
+      load += outglignestr.length();
+      load += ":";
+      load += tempid;
+      load += ":";
+      load += outglignestr;
+      interpreter(load);
       return true;
     }
   }
@@ -2367,6 +2380,7 @@ void interpreter(String msg){
     scheduleCommand(del, cmd);
     }
     if(cmd == "startfile"){
+      filereceivientstation = getValue(msg, ':', 1).toInt();
       prefs.putBool("infilecache", true);
       prefs.putBool("isfdeson", true);
       prefs.putUInt("offsetfile", 0);
@@ -2380,6 +2394,10 @@ void interpreter(String msg){
       Serial.println(prefs.getBool("isfdeson", 0));
       Serial.print("togateCountFile:");
       Serial.println(togateCountFile);
+    }
+    if(cmd == "stopfile"){
+      prefs.putBool("infilecache", false);
+      Serial.println("Export fichier tx.txt arrêté");
     }
     if(cmd == "expfile"){
       exportfile();
