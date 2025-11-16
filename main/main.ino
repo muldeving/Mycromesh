@@ -49,6 +49,8 @@ const int MAX_PINGS = 10;       // Nombre maximum d'entrées
 const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
 const int MAX_TOGATE_COMMANDS_FILE = 20;
+const int filetimeout = 300;
+const int filetxtimeout = 60;
 
 const int csPin = 21;          // LoRa radio chip select
 const int resetPin = -1;       // LoRa radio reset
@@ -56,7 +58,12 @@ const int irqPin = 8;          // change for your board; must be a hardware inte
 
 // variables systeme
 
-int filereceivientstation = 0;
+bool isfdeson = false;
+bool infilecache = false;
+int filetxdelai;
+int filedelai;
+int filesender = -1;
+int filereceivientstation = -1;
 unsigned long ltgdel = 0;
 bool sensorstart = false;
 int lastMinuteChecked = -1;
@@ -283,7 +290,7 @@ bool togateRemoveByIdFile(int id) {
       Serial.print(togateQueueFile[i].command);
       Serial.println("\"");
       
-      prefs.putBool("isfdeson", true);
+      isfdeson = true;
       ltgdelfile = (millis()/1000);
       nbtogatefailfile = 0;
       
@@ -358,8 +365,8 @@ void purgeToOldFile() {
   }
   
   // Si trop d'échecs, marquer la gate comme hors ligne
-  if (nbtogatefailfile >= 3 && prefs.getBool("isfdeson", 0) == 1) {
-    prefs.putBool("isfdeson", false);
+  if (nbtogatefailfile >= 3 && isfdeson == 1) {
+    isfdeson = false;
     Serial.println("[TogateFile] Gate marquée hors ligne (trop d'échecs).");
   }
 }
@@ -1426,7 +1433,7 @@ bool exportfile() {
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
     Serial.println("Fichier introuvable.");
-    prefs.putBool("infilecache", false);
+    infilecache = false;
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
     LoRa.setPins(csPin, resetPin, irqPin);
@@ -1440,11 +1447,20 @@ bool exportfile() {
     Serial.println("Fin fichier cache");
     SD.remove("/tx.txt");
     prefs.remove("offsetfile");
-    prefs.putBool("infilecache", false);
+    infilecache = false;
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
     LoRa.setPins(csPin, resetPin, irqPin);
     LoRa.begin(433E6);
+    delay(200);
+    String tempfend = "send:";
+    tempfend += filereceivientstation;
+    tempfend += ":fend:";
+    tempfend += localAddress;
+    interpreter(tempfend);
+    Serial.print("Fermeture transmission fichier avec :");
+    Serial.println(filereceivientstation);
+    filereceivientstation = -1;
     return false;
   }
 
@@ -1625,12 +1641,13 @@ void loop() {
     exportcache();
   }
 
-  if(prefs.getBool("infilecache", 0) == true && prefs.getBool("isfdeson", 0) == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 5) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 5) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
+    filetxdelai = (millis()/1000);
     exportfile();
   }
 
-  if(pingphase == 0 && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
+  if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
       Serial.println("idle");
@@ -1656,6 +1673,14 @@ void loop() {
       Serial.println("action");
     }
     stationstat = 0;
+  }  
+  if (filereceivientstation > -1 && (isfdeson == 0 || infilecache == 0) && (((millis()/1000) - filetxdelai) > filetxtimeout || filetxdelai > (millis()/1000))){
+    filereceivientstation = -1;
+    Serial.println("Echec de trasnmission fichier (RX_STATION_NOT_RESPOND)");
+  }
+  if (filesender > -1 && (((millis()/1000) - filedelai) > filetimeout || filedelai > (millis()/1000))){
+    filesender = -1;
+    Serial.println("Echec de recepetion fichier (TIMEOUT)");
   }
   executeCronTasks();
   togatePurgeOld();
@@ -2381,50 +2406,76 @@ void interpreter(String msg){
     }
     if(cmd == "startfile"){
       filereceivientstation = getValue(msg, ':', 1).toInt();
-      prefs.putBool("infilecache", true);
-      prefs.putBool("isfdeson", true);
+      infilecache = true;
+      isfdeson = true;
       prefs.putUInt("offsetfile", 0);
       nbtogatefailfile = 0;
       Serial.println("Export fichier tx.txt démarré");
     }
     if(cmd == "filestate"){
       Serial.print("infilecache:");
-      Serial.println(prefs.getBool("infilecache", 0));
+      Serial.println(infilecache);
       Serial.print("isfdeson:");
-      Serial.println(prefs.getBool("isfdeson", 0));
+      Serial.println(isfdeson);
       Serial.print("togateCountFile:");
       Serial.println(togateCountFile);
     }
     if(cmd == "stopfile"){
-      prefs.putBool("infilecache", false);
+      isfdeson = false;
+      infilecache = false;
       Serial.println("Export fichier tx.txt arrêté");
     }
     if(cmd == "expfile"){
       exportfile();
     }  
     if(cmd == "file"){
+      filedelai = (millis()/1000);
       Serial.println(msg.substring(5, msg.length()));
       importfile("/rx.txt", msg.substring(5, msg.length()));
     }
-    if(cmd == "mktx"){
-      int nbtours = getValue(msg, ':', 1).toInt();
-      Serial.println(nbtours);
-      for (int i = 0; i < nbtours; ) {
-        i++;
-        Serial.println(i);
-        String togate = "file:Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur tincidunt rutrum tempus. Cras at.";
-        String tempid = generateid();
-        String load = "send:";
-        load += stationgateway;
-        load += ":load:";
-        load += localAddress;
-        load += ":";
-        load += togate.length();
-        load += ":";
-        load += tempid;
-        load += ":";
-        load += togate;
-        importfile("/tx.txt", load);
+    if(cmd == "stft"){
+      if(filereceivientstation == -1 && filesender == -1){
+        //parse
+        infilecache = true;
+        filereceivientstation = getValue(msg, ':', 1).toInt();
+        filetxdelai = (millis()/1000);
+        String tempisrf = "send:";
+        tempisrf += filereceivientstation;
+        tempisrf += ":isrf:";
+        tempisrf += localAddress;
+        interpreter(tempisrf);
+      }
+    }
+    if(cmd == "isrf"){
+      if(filereceivientstation == -1 && filesender == -1){
+        filedelai = (millis()/1000);
+        filesender = getValue(msg, ':', 1).toInt();
+        Serial.print("Récéption file de : ");
+        Serial.println(filesender);
+        String temprfok = "send:";
+        temprfok += filesender;
+        temprfok += ":rfok:";
+        temprfok += localAddress;
+        scheduleCommand(800, temprfok);
+      }      
+    }
+    if(cmd == "rfok"){
+      if(getValue(msg, ':', 1).toInt() == filereceivientstation && isfdeson == false){
+        Serial.println("Connexion station rx file OK");
+        isfdeson = true;
+        prefs.putUInt("offsetfile", 0);
+        nbtogatefailfile = 0;
+        Serial.println("Export fichier tx.txt démarré");
+        ltgdelfile = (millis()/1000);
+      }
+    }
+    
+    if(cmd == "fend"){
+      if(getValue(msg, ':', 1).toInt() == filesender){
+        Serial.print("Fermeture récéption fichier avec :");
+        Serial.println(filesender);
+        filesender = -1;
+        Serial.println("COMPILE");
       }
     }
 }
