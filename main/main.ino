@@ -16,6 +16,15 @@ ESP32Time rtc;
 
 #define uS_TO_S_FACTOR 1000000
 
+#define PACKET_SIZE 150
+#define GROUP_K 8
+#define PARITY_M 8
+#define ERROR_RATE_PERCENT 2
+#define PROGRESS_STEP 2
+
+static uint8_t gf_exp[512];
+static uint8_t gf_log_tbl[256];
+
 Adafruit_BME680 bme;
 
 // Variable Cron
@@ -58,6 +67,8 @@ const int irqPin = 8;          // change for your board; must be a hardware inte
 
 // variables systeme
 
+int remof;
+String ftfpath;
 bool isfdeson = false;
 bool infilecache = false;
 int filetxdelai;
@@ -502,6 +513,417 @@ void removeEntryByID(const String& id) {
   }
   Serial.print("Aucune entrée trouvée avec l'ID: ");
   Serial.println(id);
+}
+
+void initGaloisField() {
+  uint8_t x = 1;
+  for (int i = 0; i < 255; i++) {
+    gf_exp[i] = x;
+    gf_log_tbl[x] = i;
+    x = (x << 1) ^ ((x & 0x80) ? 0x1D : 0);
+  }
+  for (int i = 255; i < 512; i++) gf_exp[i] = gf_exp[i - 255];
+  gf_log_tbl[0] = 0;
+}
+
+uint8_t gfMul(uint8_t a, uint8_t b) {
+  if (a == 0 || b == 0) return 0;
+  int r = gf_log_tbl[a] + gf_log_tbl[b];
+  return gf_exp[r % 255];
+}
+
+uint8_t gfPow(uint8_t x, int power) {
+  if (power == 0) return 1;
+  if (x == 0) return 0;
+  int r = (gf_log_tbl[x] * power) % 255;
+  return gf_exp[r];
+}
+
+uint8_t gfInv(uint8_t a) {
+  if (a == 0) return 0;
+  return gf_exp[(255 - gf_log_tbl[a]) % 255];
+}
+
+uint32_t crc32_buf(const uint8_t *buf, size_t len) {
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= buf[i];
+    for (int j = 0; j < 8; j++) crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+  }
+  return ~crc;
+}
+
+uint32_t crc32_file(File &f) {
+  uint32_t crc = 0xFFFFFFFF;
+  f.seek(0);
+  uint8_t buf[256];
+  while (f.available()) {
+    int r = f.read(buf, sizeof(buf));
+    for (int i = 0; i < r; i++) {
+      crc ^= buf[i];
+      for (int j = 0; j < 8; j++) crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    }
+  }
+  return ~crc;
+}
+
+String bytesToHex(const uint8_t *data, int len) {
+  String s;
+  s.reserve(len*2);
+  char tmp[3]; tmp[2] = 0;
+  for (int i = 0; i < len; i++) {
+    sprintf(tmp, "%02X", data[i]);
+    s += tmp;
+  }
+  return s;
+}
+
+bool hexToBytes(const String &hex, uint8_t *out, int outLen) {
+  if ((int)hex.length() != outLen*2) return false;
+  char str[3]; str[2]=0;
+  for (int i = 0; i < outLen; i++) {
+    str[0] = hex.charAt(i*2);
+    str[1] = hex.charAt(i*2+1);
+    long v = strtol(str, NULL, 16);
+    if (v < 0 || v > 255) return false;
+    out[i] = (uint8_t)v;
+  }
+  return true;
+}
+
+// NEW: wrap hex output so each line <=150 chars
+void writeWrappedHex(File &f, const String &prefix, const String &hex, int maxLen = 150) {
+  int total = hex.length();
+  int pos = 0;
+  while (pos < total) {
+    int chunk = min(maxLen, total - pos);
+    f.print(prefix);
+    f.println(hex.substring(pos, pos + chunk));
+    pos += chunk;
+  }
+}
+
+void encodeGroupParity(uint8_t **dataBuf, uint8_t **parityBuf) {
+  for (int p = 0; p < PARITY_M; p++) {
+    uint8_t alpha = (uint8_t)(p + 1);
+    memset(parityBuf[p], 0, PACKET_SIZE);
+    for (int i = 0; i < GROUP_K; i++) {
+      uint8_t coef = gfPow(alpha, i);
+      for (int b = 0; b < PACKET_SIZE; b++) {
+        parityBuf[p][b] ^= gfMul(dataBuf[i][b], coef);
+      }
+    }
+  }
+}
+
+bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
+  uint8_t *work = (uint8_t*)malloc(n * n);
+  if (!work) return false;
+  memcpy(work, mat, n * n);
+
+  for (int r = 0; r < n; r++) for (int c = 0; c < n; c++) inv[r*n + c] = (r==c)?1:0;
+
+  for (int col = 0; col < n; col++) {
+    int pivot = -1;
+    for (int r = col; r < n; r++) if (work[r*n + col] != 0) { pivot = r; break; }
+    if (pivot == -1) { free(work); return false; }
+
+    if (pivot != col) {
+      for (int c = 0; c < n; c++) {
+        uint8_t t = work[col*n + c]; work[col*n + c] = work[pivot*n + c]; work[pivot*n + c] = t;
+        uint8_t s = inv[col*n + c]; inv[col*n + c] = inv[pivot*n + c]; inv[pivot*n + c] = s;
+      }
+    }
+
+    uint8_t pv = work[col*n + col];
+    uint8_t pv_inv = gfInv(pv);
+
+    for (int c = 0; c < n; c++) work[col*n + c] = gfMul(work[col*n + c], pv_inv);
+    for (int c = 0; c < n; c++) inv[col*n + c] = gfMul(inv[col*n + c], pv_inv);
+
+    for (int r = 0; r < n; r++) {
+      if (r == col) continue;
+      uint8_t factor = work[r*n + col];
+      if (factor == 0) continue;
+      for (int c = 0; c < n; c++) {
+        work[r*n + c] ^= gfMul(factor, work[col*n + c]);
+        inv[r*n + c] ^= gfMul(factor, inv[col*n + c]);
+      }
+    }
+  }
+
+  free(work);
+  return true;
+}
+
+// ---------------- PARSE ----------------
+bool parseFile(String path) {
+  Serial.println("\n=== PARSE ===");
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  if (!SD.begin(7)) {Serial.println("PB");}
+  if (!SD.exists(path)) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" introuvable"); return false; }
+  File inF = SD.open(path, FILE_READ);
+  if (!inF) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" inouvrable"); return false; }
+
+  uint32_t fileSize = inF.size();
+  uint32_t fcrc = crc32_file(inF);
+  inF.seek(0);
+
+  uint32_t totalDataPackets = (fileSize + PACKET_SIZE - 1) / PACKET_SIZE;
+  uint32_t parityGroups = (totalDataPackets + GROUP_K - 1) / GROUP_K;
+
+  if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
+  File tx = SD.open("/tx.txt", FILE_WRITE);
+  if (!tx) { inF.close(); Serial.println("ERREUR création tx.txt"); return false; }
+
+  tx.printf("META:%u:%08X:%u:%u:%u:%u\n", (unsigned)totalDataPackets, (unsigned)fcrc, (unsigned)fileSize, (unsigned)parityGroups, (unsigned)GROUP_K, (unsigned)PARITY_M);
+
+  uint8_t *dataBuf[GROUP_K];
+  for (int i=0;i<GROUP_K;i++) dataBuf[i] = (uint8_t*)calloc(PACKET_SIZE,1);
+  uint8_t *parityBuf[PARITY_M];
+  for (int p=0;p<PARITY_M;p++) parityBuf[p] = (uint8_t*)calloc(PACKET_SIZE,1);
+
+  for (uint32_t g = 0; g < parityGroups; g++) {
+    for (int i=0;i<GROUP_K;i++) {
+      memset(dataBuf[i],0,PACKET_SIZE);
+      int r = inF.read(dataBuf[i], PACKET_SIZE);
+      (void)r;
+      uint32_t pid = g*GROUP_K + i;
+      if (pid >= totalDataPackets) break;
+      uint32_t dcrc = crc32_buf(dataBuf[i], PACKET_SIZE);
+      tx.printf("DATA:%04X:%08X:""\n", (unsigned)pid, (unsigned)dcrc);
+      String h = bytesToHex(dataBuf[i], PACKET_SIZE);
+      writeWrappedHex(tx, "DATA_CONT:", h);
+    }
+
+    encodeGroupParity(dataBuf, parityBuf);
+    for (int p=0;p<PARITY_M;p++) {
+      uint32_t pcrc = crc32_buf(parityBuf[p], PACKET_SIZE);
+      tx.printf("PARITY:%04X:%02X:%08X:""\n", (unsigned)g, (unsigned)p, (unsigned)pcrc);
+      String h = bytesToHex(parityBuf[p], PACKET_SIZE);
+      writeWrappedHex(tx, "PARITY_CONT:", h);
+    }
+  }
+
+  for (int i=0;i<GROUP_K;i++) free(dataBuf[i]);
+  for (int p=0;p<PARITY_M;p++) free(parityBuf[p]);
+
+  tx.close(); inF.close();
+  digitalWrite(csPin,0);
+  digitalWrite(20,1);
+  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+  LoRa.begin(433E6);
+  Serial.println("PARSE terminé.");
+  return true;
+}
+
+// ---------------- COMPILE ----------------
+void compileFile(String fnameced, int origin, int toremof) {
+  Serial.println("\n=== COMPILE ===");
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  if (!SD.begin(7)) {Serial.println("PB");}
+  if (!SD.exists("/rx.txt")) { Serial.println("ERREUR: /rx.txt introuvable"); return; }
+  File rx = SD.open("/rx.txt", FILE_READ);
+  if (!rx) { Serial.println("ERREUR ouverture rx.txt"); return; }
+
+  String meta = rx.readStringUntil('\n'); meta.trim();
+  if (!meta.startsWith("META:")) { rx.close(); Serial.println("ERREUR META manquantes"); return; }
+
+  unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0, metaK=0, metaM=0;
+
+  int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups, &metaK, &metaM);
+  if (scanned<6) { Serial.println("ERREUR meta"); rx.close(); return; }
+
+  if (SD.exists(fnameced)) SD.remove(fnameced);
+  File out = SD.open(fnameced, FILE_WRITE);
+  if (!out) { rx.close(); Serial.println("ERREUR out.txt"); return; }
+
+  uint32_t bytesWritten=0;
+
+  for (unsigned int g=0; g<parityGroups; g++) {
+
+    uint8_t *dataBuf[GROUP_K]; bool hasData[GROUP_K];
+    for (int i=0;i<GROUP_K;i++) { dataBuf[i]=(uint8_t*)calloc(PACKET_SIZE,1); hasData[i]=false; }
+
+    uint8_t *parityBuf[PARITY_M]; bool hasParity[PARITY_M];
+    for (int p=0;p<PARITY_M;p++) { parityBuf[p]=(uint8_t*)calloc(PACKET_SIZE,1); hasParity[p]=false; }
+
+    rx.seek(0); rx.readStringUntil('\n');
+
+    while (rx.available()) {
+      String line = rx.readStringUntil('\n'); line.trim();
+      if (line.length()==0) continue;
+
+      if (line.startsWith("DATA:")) {
+        unsigned int pid, dcrc; int hdrEnd=0;
+        if (sscanf(line.c_str(), "DATA:%X:%X:%n", &pid, &dcrc, &hdrEnd)>=2) {
+          unsigned int base = g*GROUP_K;
+          if (pid>=base && pid<base+GROUP_K) {
+            int idx = pid - base;
+            String hex="";
+
+            while (true) {
+              long posSave=rx.position();
+              String cont=rx.readStringUntil('\n'); cont.trim();
+              if (!cont.startsWith("DATA_CONT:")) { rx.seek(posSave); break; }
+              hex += cont.substring(cont.indexOf(':')+1);
+            }
+
+            if (hex.length()==PACKET_SIZE*2 && hexToBytes(hex,dataBuf[idx],PACKET_SIZE)) {
+              if (crc32_buf(dataBuf[idx], PACKET_SIZE)==dcrc) hasData[idx]=true;
+            }
+          }
+        }
+      }
+      else if (line.startsWith("PARITY:")) {
+        unsigned int gid, copy, pcrc; int hdrEnd=0;
+        if (sscanf(line.c_str(), "PARITY:%X:%X:%X:%n", &gid, &copy, &pcrc, &hdrEnd)>=3) {
+          if (gid==g && copy<PARITY_M) {
+            String hex="";
+            while (true) {
+              long posSave=rx.position();
+              String cont=rx.readStringUntil('\n'); cont.trim();
+              if (!cont.startsWith("PARITY_CONT:")) { rx.seek(posSave); break; }
+              hex += cont.substring(cont.indexOf(':')+1);
+            }
+
+            if (hex.length()==PACKET_SIZE*2 && hexToBytes(hex,parityBuf[copy],PACKET_SIZE)) {
+              if (crc32_buf(parityBuf[copy], PACKET_SIZE)==pcrc) hasParity[copy]=true;
+            }
+          }
+        }
+      }
+    }
+
+    int missingCount=0, missingIdx[GROUP_K];
+    for (int i=0;i<GROUP_K;i++) {
+      unsigned int globalId=g*GROUP_K+i;
+      if (globalId>=totalDataPackets) { hasData[i]=true; memset(dataBuf[i],0,PACKET_SIZE); }
+      else if (!hasData[i]) missingIdx[missingCount++]=i;
+    }
+
+    if (missingCount==0) {
+      for (int i=0;i<GROUP_K;i++) {
+        unsigned int globalId=g*GROUP_K+i;
+        if (globalId>=totalDataPackets) break;
+        uint32_t remain = (expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
+        size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
+        if (toWrite>0) { out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
+      }
+      for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
+      for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
+      continue;
+    }
+
+    if (missingCount>PARITY_M) {
+      for (int i=0;i<GROUP_K;i++) {
+        unsigned int globalId=g*GROUP_K+i;
+        if (globalId>=totalDataPackets) break;
+        uint32_t remain=(expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
+        size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
+        if (toWrite>0){ out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
+      }
+      for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
+      for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
+      continue;
+    }
+
+    int availP=0, parityIdxs[PARITY_M];
+    for (int p=0;p<PARITY_M;p++) if (hasParity[p]) parityIdxs[availP++]=p;
+
+    int n=missingCount;
+    uint8_t *mat=(uint8_t*)malloc(n*n);
+    uint8_t *inv=(uint8_t*)malloc(n*n);
+    memset(mat,0,n*n); memset(inv,0,n*n);
+
+    for(int r=0;r<n;r++){
+      uint8_t alpha=(uint8_t)(parityIdxs[r]+1);
+      for(int c=0;c<n;c++) mat[r*n+c]=gfPow(alpha, missingIdx[c]);
+    }
+
+    invertMatrixGF(mat,inv,n);
+
+    uint8_t *rhs=(uint8_t*)malloc(n);
+    uint8_t *sol=(uint8_t*)malloc(n);
+
+    for(int b=0;b<PACKET_SIZE;b++){
+      for(int r=0;r<n;r++){
+        uint8_t val=parityBuf[parityIdxs[r]][b];
+        for(int i=0;i<GROUP_K;i++){
+          bool isMissing=false;
+          for(int mm=0;mm<n;mm++) if(missingIdx[mm]==i){isMissing=true;break;}
+          if(!isMissing){ val ^= gfMul(dataBuf[i][b], gfPow((uint8_t)(parityIdxs[r]+1),i)); }
+        }
+        rhs[r]=val;
+      }
+      for(int row=0;row<n;row++){
+        uint8_t acc=0;
+        for(int c=0;c<n;c++) acc ^= gfMul(inv[row*n+c], rhs[c]);
+        sol[row]=acc;
+      }
+      for(int mm=0;mm<n;mm++) dataBuf[missingIdx[mm]][b]=sol[mm];
+    }
+
+    free(rhs); free(sol); free(mat); free(inv);
+
+    for(int i=0;i<GROUP_K;i++){
+      unsigned int globalId=g*GROUP_K+i;
+      if (globalId>=totalDataPackets) break;
+      uint32_t remain=(expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
+      size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
+      if(toWrite>0){ out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
+    }
+
+    for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
+    for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
+  }
+
+  out.close(); rx.close();
+
+  File outf = SD.open(fnameced, FILE_READ);
+  uint32_t finalCRC=crc32_file(outf);
+  uint32_t finalSize=outf.size();
+  SD.remove("/rx.txt");
+  outf.close();
+  digitalWrite(csPin,0);
+  digitalWrite(20,1);
+  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+  LoRa.begin(433E6);
+
+  Serial.printf("FINAL size=%u/%u CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC);
+  if(finalSize == expectedSize && finalCRC == fileCRC){
+    Serial.println("File OK");
+    Serial.print("Le fichier : ");
+    Serial.print(fnameced);
+    Serial.print(" de : ");
+    Serial.print(origin);
+    if(toremof == 1){
+      Serial.println(" sera supprimer");
+    }
+    else{
+      Serial.println(" ne sera pas supprimer");
+    }
+    String tempfeok = "send:";
+    tempfeok += origin;
+    tempfeok += ":feok:";
+    tempfeok += localAddress;
+    tempfeok += ":";
+    tempfeok += fnameced;
+    tempfeok += ":";
+    tempfeok += toremof;
+    Serial.println(tempfeok);
+    interpreter(tempfeok);
+  }
 }
 
 void addVertex(int v) {
@@ -1259,6 +1681,8 @@ void readsd(bool allrecover){
       sdtocron = getValue(sdtocron, '\n', 0);
       Serial.print(sdtocron);
       crontabString = sdtocron;
+
+      initGaloisField();
       
       LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
       LoRa.begin(433E6);
@@ -1457,6 +1881,10 @@ bool exportfile() {
     tempfend += filereceivientstation;
     tempfend += ":fend:";
     tempfend += localAddress;
+    tempfend += ":";
+    tempfend += ftfpath;
+    tempfend += ":";
+    tempfend += remof;
     interpreter(tempfend);
     Serial.print("Fermeture transmission fichier avec :");
     Serial.println(filereceivientstation);
@@ -1546,6 +1974,25 @@ void importfile(String file, String input){
   else{
     Serial.println("PBfile");
   }
+  digitalWrite(csPin,0);
+  digitalWrite(20,1);
+  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+  LoRa.begin(433E6); 
+}
+
+bool remfromsd(String rmpath){
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  if (!SD.begin(7)) {Serial.println("PBsd");}
+
+  if(SD.remove(rmpath)){
+    return true;
+  }
+
   digitalWrite(csPin,0);
   digitalWrite(20,1);
   LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
@@ -2435,15 +2882,18 @@ void interpreter(String msg){
     }
     if(cmd == "stft"){
       if(filereceivientstation == -1 && filesender == -1){
-        //parse
-        infilecache = true;
-        filereceivientstation = getValue(msg, ':', 1).toInt();
-        filetxdelai = (millis()/1000);
-        String tempisrf = "send:";
-        tempisrf += filereceivientstation;
-        tempisrf += ":isrf:";
-        tempisrf += localAddress;
-        interpreter(tempisrf);
+        remof = getValue(msg, ':', 3).toInt();
+        ftfpath = getValue(msg, ':', 2);
+        if (parseFile(ftfpath)){
+          infilecache = true;
+          filereceivientstation = getValue(msg, ':', 1).toInt();
+          filetxdelai = (millis()/1000);
+          String tempisrf = "send:";
+          tempisrf += filereceivientstation;
+          tempisrf += ":isrf:";
+          tempisrf += localAddress;
+          interpreter(tempisrf);
+        }
       }
     }
     if(cmd == "isrf"){
@@ -2474,8 +2924,32 @@ void interpreter(String msg){
       if(getValue(msg, ':', 1).toInt() == filesender){
         Serial.print("Fermeture récéption fichier avec :");
         Serial.println(filesender);
+        Serial.print("COMPILE : ");
+        Serial.println(getValue(msg, ':', 2)); 
+        String tempfntc = "compileFile:";
+        tempfntc += getValue(msg, ':', 2);
+        tempfntc += ":";
+        tempfntc += filesender;
+        tempfntc += ":";
+        tempfntc += getValue(msg, ':', 3);
         filesender = -1;
-        Serial.println("COMPILE");
+        scheduleCommand(800, tempfntc);
+      }
+    }
+    if(cmd == "compileFile"){
+      compileFile(getValue(msg, ':', 1), getValue(msg, ':', 2).toInt(), getValue(msg, ':', 3).toInt());      
+    }
+    if(cmd == "feok"){
+      Serial.print("Fichier : ");
+      Serial.print(getValue(msg, ':', 2));
+      Serial.print(" bien reçu par : ");
+      Serial.println(getValue(msg, ':', 1));
+      if(getValue(msg, ':', 3) == "1"){
+        Serial.println("suppresion");
+        remfromsd(getValue(msg, ':', 2));
+      }
+      else{
+        Serial.println("fichier origine conserver");
       }
     }
 }
