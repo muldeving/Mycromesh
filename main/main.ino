@@ -19,8 +19,6 @@ ESP32Time rtc;
 #define PACKET_SIZE 150
 #define GROUP_K 8
 #define PARITY_M 8
-#define ERROR_RATE_PERCENT 2
-#define PROGRESS_STEP 2
 
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
@@ -714,6 +712,9 @@ bool parseFile(String path) {
   for (int p=0;p<PARITY_M;p++) free(parityBuf[p]);
 
   tx.close(); inF.close();
+  
+  if (SD.exists("/large.cmd") && path == "/large.cmd") SD.remove("/large.cmd");
+  
   digitalWrite(csPin,0);
   digitalWrite(20,1);
   LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
@@ -895,6 +896,17 @@ void compileFile(String fnameced, int origin, int toremof) {
   uint32_t finalSize=outf.size();
   SD.remove("/rx.txt");
   outf.close();
+  outf = SD.open(fnameced, FILE_READ);
+  String tointlarge;
+  if(fnameced == "/large.cmd"){
+    Serial.println("lecture");
+    while (outf.available()) {
+      tointlarge += (char)outf.read();
+    }
+    if (SD.exists("/large.cmd")) SD.remove("/large.cmd");
+  }
+  
+  outf.close();
   digitalWrite(csPin,0);
   digitalWrite(20,1);
   LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
@@ -923,6 +935,10 @@ void compileFile(String fnameced, int origin, int toremof) {
     tempfeok += toremof;
     Serial.println(tempfeok);
     interpreter(tempfeok);
+    if(fnameced == "/large.cmd"){
+      Serial.println(tointlarge);
+      scheduleCommand(2000, tointlarge);
+    }
   }
 }
 
@@ -1999,6 +2015,38 @@ bool remfromsd(String rmpath){
   LoRa.begin(433E6); 
 }
 
+void large(String tosdlarge, int tosendlarge){
+  if(filereceivientstation == -1 && filesender == -1){
+      delay(50);
+      LoRa.setFrequency(433.1);
+      SPI.transfer(0);
+      digitalWrite(csPin,1);
+      digitalWrite(20,0);
+      delay(100);
+      if (!SD.begin(7)) {Serial.println("PB");}
+
+      if (SD.exists("/large.cmd")) SD.remove("/large.cmd");
+      File testFile = SD.open("/large.cmd", FILE_WRITE);
+      if (testFile) {
+        testFile.println(tosdlarge);
+        testFile.close();
+      }
+
+      digitalWrite(csPin,0);
+      digitalWrite(20,1);
+      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+      LoRa.begin(433E6); 
+
+      String tofslarge = "stft:";
+      tofslarge += tosendlarge;
+      tofslarge += ":";
+      tofslarge += "/large.cmd";
+      tofslarge += ":";
+      tofslarge += "0";
+      interpreter(tofslarge);
+  }
+}
+
 void setup() {
   Serial.begin(9600);                   // initialize serial
   while (!Serial);
@@ -2675,19 +2723,27 @@ void interpreter(String msg){
       interpreter(load);
     }
     if(cmd == "send"){
-      String tempid = generateid();
-      String dijk = "dijk:";
-      dijk += getValue(msg, ':', 1).toInt();
-      dijk += ":";
-      dijk += localAddress;
-      dijk += ":";
-      dijk += (msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length())).length();
-      dijk += ":";
-      dijk += tempid;
-      dijk += ":";
-      dijk += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
-      Serial.println(dijk);
-      interpreter(dijk);
+      if((msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length())).length() >= 225){
+        String dijk;
+        dijk += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
+        Serial.println(dijk);
+        large(dijk, getValue(msg, ':', 1).toInt());
+      }
+      else{
+        String tempid = generateid();
+        String dijk = "dijk:";
+        dijk += getValue(msg, ':', 1).toInt();
+        dijk += ":";
+        dijk += localAddress;
+        dijk += ":";
+        dijk += (msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length())).length();
+        dijk += ":";
+        dijk += tempid;
+        dijk += ":";
+        dijk += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
+        Serial.println(dijk);
+        interpreter(dijk);        
+      }
     }
     if(cmd == "gmap"){ 
       for (int r = 0; r <= MAX_VERTICES;) {      
