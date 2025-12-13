@@ -1200,7 +1200,11 @@ bool dijkstra(int src, int dest, String outgoing) {
   Serial.print(dest);
   Serial.print(" est ");
   Serial.println(nextStep);
-  sendMessage(1, outgoing, nextStep);  
+  String tosenddijk = "trsm:";
+  tosenddijk += nextStep;
+  tosenddijk += ":";
+  tosenddijk += outgoing;
+  scheduleCommand(1600, tosenddijk); 
   return true;
 }
 
@@ -2629,9 +2633,9 @@ void interpreter(String msg){
         rxok += ":";
         rxok += localAddress;
         if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(500, rxok);
-          if(getValue(msg, ':', 1).toInt() == localAddress){            
-            interpreter(tempinload); // execution commande
+          scheduleCommand(800, rxok);
+          if(getValue(msg, ':', 1).toInt() == localAddress){  
+            scheduleCommand(1600, tempinload);
           }
         }
       }
