@@ -2576,7 +2576,7 @@ void interpreter(String msg){
       rping += String(sender);
       rping += ":rpin:";
       rping += String(LoRa.packetRssi());
-      scheduleCommand(500, rping);
+      scheduleCommand(800, rping);
     }    
     if(cmd == "rpin"){
       Serial.println("-----------------------------------------");
@@ -2634,9 +2634,9 @@ void interpreter(String msg){
         rxok += ":";
         rxok += localAddress;
         if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(800, rxok);
+          scheduleCommand(600, rxok);
           if(getValue(msg, ':', 1).toInt() == localAddress){  
-            scheduleCommand(1600, tempinload);
+            scheduleCommand(1100, tempinload);
           }
         }
       }
