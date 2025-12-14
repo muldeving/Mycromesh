@@ -2013,6 +2013,7 @@ bool remfromsd(String rmpath){
     return true;
   }
 
+  delay(100);
   digitalWrite(csPin,0);
   digitalWrite(20,1);
   LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
@@ -2962,6 +2963,7 @@ void interpreter(String msg){
         filesender = getValue(msg, ':', 1).toInt();
         Serial.print("Récéption file de : ");
         Serial.println(filesender);
+        remfromsd("/rx.txt");
         String temprfok = "send:";
         temprfok += filesender;
         temprfok += ":rfok:";
