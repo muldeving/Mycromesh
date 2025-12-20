@@ -97,6 +97,7 @@ int nbtogatefail = 0;
 unsigned long ltgdelfile = 0;
 int nbtogatefailfile = 0;
 int togateCountFile = 0;
+unsigned long lastair;
 
 // Tableaux
 
@@ -329,6 +330,7 @@ void purgeToOldFile() {
       Serial.print("[TogateFile] Commande expirée : ID=");
       Serial.print(togateQueueFile[i].id);
       Serial.println(", remise dans tx.txt");
+      ltgdelfile = (millis()/1000);
       
       linesToRestore += togateQueueFile[i].command;
       linesToRestore += "\n";
@@ -383,6 +385,13 @@ void purgeToOldFile() {
 
 // Fonction pour ajouter une nouvelle entrée
 void addPingEntry(int nbtoping, int nbping) {
+    for (int i = 0; i < pingCount; i++) {
+    if (pingList[i].nbtoping == nbtoping) {
+      Serial.print("Existe déja: ");
+      Serial.println(pingList[i].nbtoping);
+      return;
+    }
+  }  
   if (pingCount < MAX_PINGS) {
     pingList[pingCount].nbtoping = nbtoping;
     pingList[pingCount].pingTime = millis();
@@ -407,7 +416,12 @@ void checkAndRemoveOldPingEntries() {
         Serial.print(pingList[i].nbtoping);
         Serial.print(" -> nbping: ");
         Serial.println(pingList[i].nbping);
-        sendMessage(1, "ping", pingList[i].nbtoping);
+        
+        String tempping = "trsm:";
+        tempping += pingList[i].nbtoping;
+        tempping += ":ping";
+        scheduleCommand(300, tempping);
+        
         i++; // Passer à l'entrée suivante
       } else {
         // Supprimer l'entrée si nbping > 3
@@ -422,6 +436,7 @@ void checkAndRemoveOldPingEntries() {
         }
         pingCount--; // Réduire le nombre d'entrées
       }
+      return;
     } else {
       i++; // Passer à l'entrée suivante
     }
@@ -475,25 +490,41 @@ void checkAndRemoveOldEntries() {
         dijkstra(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt(), entryList[i].msgtosend);
         Serial.println(entryList[i].msgtosend);
         Serial.println(getValue(entryList[i].msgtosend, ':', 1).toInt());
-        
         i++; // Passer à l'entrée suivante
       } else {
-        // Supprimer l'entrée si nbtrysend > 3
-        int despingverif = nextstep(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt());
-        addPingEntry(despingverif, 1);
-        removeEdge(localAddress, despingverif);
-        sendMessage(1, "ping", despingverif);
+        // Supprimer l'entrée si nbtrysend > 3                
         Serial.print("Suppression de l'entrée ID: ");
         Serial.println(entryList[i].id);
         for (int j = i; j < entryCount - 1; j++) {
           entryList[j] = entryList[j + 1];
         }
         entryCount--; // Réduire le nombre d'entrées
+        if(deststilinl(getValue(entryList[i].msgtosend, ':', 1).toInt())){
+        int despingverif = nextstep(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt());
+        addPingEntry(despingverif, 1);
+        removeEdge(localAddress, despingverif);
+        String tempping = "trsm:";
+        tempping += despingverif;
+        tempping += ":ping";
+        scheduleCommand(300, tempping);
+        }
       }
-    } else {
+      return;
+    }       
+    else {
       i++; // Passer à l'entrée suivante
     }
   }
+}
+
+bool deststilinl(int dest){
+    for (int i = 0; i < entryCount; ) {
+    if (getValue(entryList[i].msgtosend, ':', 1).toInt() == dest) {
+      return false;
+    }
+    i++; // Passer à l'entrée suivante
+  }
+  return true;
 }
 
 // Fonction pour supprimer une entrée par ID
@@ -1204,7 +1235,7 @@ bool dijkstra(int src, int dest, String outgoing) {
   tosenddijk += nextStep;
   tosenddijk += ":";
   tosenddijk += outgoing;
-  scheduleCommand(1600, tosenddijk); 
+  scheduleCommand(500, tosenddijk); 
   return true;
 }
 
@@ -2010,14 +2041,23 @@ bool remfromsd(String rmpath){
   if (!SD.begin(7)) {Serial.println("PBsd");}
 
   if(SD.remove(rmpath)){
+    delay(100);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    delay(200);
     return true;
   }
-
-  delay(100);
-  digitalWrite(csPin,0);
-  digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6); 
+  else{
+    delay(100);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    delay(200);
+    return false;
+  }
 }
 
 void large(String tosdlarge, int tosendlarge){
@@ -2097,15 +2137,12 @@ void setup() {
 }
 
 void loop() {
-  checkDelayedCommands();
-   removeExpiredValues();
-   if(Serial.available()>0)
+  if(Serial.available()>0)
    {
     interpreter(Serial.readString());
     delay(100);
    }
   onReceive(LoRa.parsePacket());
-
       
   if(pingphase == 1 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
@@ -2129,9 +2166,6 @@ void loop() {
     fpingdel = millis() / 1000;
   }
 
-  checkAndRemoveOldEntries();
-  checkAndRemoveOldPingEntries();
-
   if(startstat < 7 && startstat > 0 && maintmode == false){
     startprocedure();
   }
@@ -2141,7 +2175,7 @@ void loop() {
     exportcache();
   }
 
-  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 5) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 10) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
     filetxdelai = (millis()/1000);
     exportfile();
@@ -2182,9 +2216,18 @@ void loop() {
     filesender = -1;
     Serial.println("Echec de recepetion fichier (TIMEOUT)");
   }
-  executeCronTasks();
+  if(millis() >= (lastair + 200) || millis() < lastair){
+    checkDelayedCommands();
+  }
+  if(millis() >= (lastair + 1000) || millis() < lastair){
+    checkAndRemoveOldEntries();
+    checkAndRemoveOldPingEntries(); 
+    executeCronTasks();   
+  }
+  
   togatePurgeOld();
   purgeToOldFile();
+  removeExpiredValues();
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
@@ -2210,14 +2253,32 @@ void checkDelayedCommands() {
       tmpcmdd = commandQueue[i].command;
       commandQueue[i].active = false;
       interpreter(tmpcmdd);
+      return;
     }
   }
 }
 
 void sendMessage(bool wake, String outgoing, int destination) {
+
+  if(millis() < (lastair+200)){
+    if(wake == true){
+      String temptosend = "trsm:";
+      temptosend += destination;
+      temptosend += ":";
+      temptosend += outgoing;
+      scheduleCommand(200, temptosend);
+    }
+    else{
+      String temptosend = "trsms:";
+      temptosend += destination;
+      temptosend += ":";
+      temptosend += outgoing;     
+      scheduleCommand(200, temptosend); 
+    }
+    return;
+  }
+  
   if(wake == true){
-    Serial.print("send:");
-    Serial.println(destination);
     LoRa.beginPacket();                   // start packet
     LoRa.print("wake");                 // add payload
     LoRa.endPacket();                     // finish packet and send it
@@ -2233,6 +2294,7 @@ void sendMessage(bool wake, String outgoing, int destination) {
   LoRa.endPacket();                     // finish packet and send it
   msgCount++;                           // increment message ID
   actiontimer = (millis()/1000);
+  lastair = millis();
 }
 
 void onReceive(int packetSize) {
@@ -2309,7 +2371,8 @@ void onReceive(int packetSize) {
    }
     return;   
   }
-  interpreter(incoming);
+  scheduleCommand(200, incoming);
+  lastair = millis();
 }
 
 String getValue(String data, char separator, int index)
@@ -2634,9 +2697,9 @@ void interpreter(String msg){
         rxok += ":";
         rxok += localAddress;
         if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(600, rxok);
+          scheduleCommand(400, rxok);
           if(getValue(msg, ':', 1).toInt() == localAddress){  
-            scheduleCommand(1100, tempinload);
+            scheduleCommand(800, tempinload);
           }
         }
       }
