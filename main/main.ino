@@ -1235,7 +1235,7 @@ bool dijkstra(int src, int dest, String outgoing) {
   tosenddijk += nextStep;
   tosenddijk += ":";
   tosenddijk += outgoing;
-  scheduleCommand(500, tosenddijk); 
+  scheduleCommand(200, tosenddijk); 
   return true;
 }
 
@@ -2175,7 +2175,7 @@ void loop() {
     exportcache();
   }
 
-  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 10) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 2) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
     filetxdelai = (millis()/1000);
     exportfile();
@@ -2697,9 +2697,9 @@ void interpreter(String msg){
         rxok += ":";
         rxok += localAddress;
         if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(400, rxok);
+          scheduleCommand(300, rxok);
           if(getValue(msg, ':', 1).toInt() == localAddress){  
-            scheduleCommand(800, tempinload);
+            scheduleCommand(400, tempinload);
           }
         }
       }
@@ -2717,7 +2717,7 @@ void interpreter(String msg){
         Serial.println(msgrt);
         if(dijkstra(localAddress, getValue(msg, ':', 1).toInt(), msgrt)){
           Serial.println("trouvé");
-          addEntry(getValue(msg, ':', 4), 1, msg);
+          addEntry(getValue(msg, ':', 4), 1, msgrt);
         }
       }
     }
@@ -2756,7 +2756,7 @@ void interpreter(String msg){
       rxok += ":";
       rxok += localAddress;
       if(tempinload.length() == getValue(msg, ':', 2).toInt()){
-        scheduleCommand(1500, rxok);
+        scheduleCommand(500, rxok);
         interpreter(tempinload); // execution commande
       }
     }
