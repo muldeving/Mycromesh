@@ -9,16 +9,22 @@
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
 #include <Preferences.h>
+#include <Update.h>
 
 Preferences prefs;
 
 ESP32Time rtc;
+
+ const String FIRMWARE_VERSION = "1.3.0";
 
 #define uS_TO_S_FACTOR 1000000
 
 #define PACKET_SIZE 150
 #define GROUP_K 8
 #define PARITY_M 8
+
+#define UPDATE_FILE "/update/firmware.bin"
+#define BUF_SIZE 4096
 
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
@@ -1235,7 +1241,7 @@ bool dijkstra(int src, int dest, String outgoing) {
   tosenddijk += nextStep;
   tosenddijk += ":";
   tosenddijk += outgoing;
-  scheduleCommand(200, tosenddijk); 
+  scheduleCommand(500, tosenddijk); 
   return true;
 }
 
@@ -2060,6 +2066,35 @@ bool remfromsd(String rmpath){
   }
 }
 
+bool mkdirsd(String rmpath){
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  if (!SD.begin(7)) {Serial.println("PBsd");}
+
+  if(SD.mkdir(rmpath)){
+    delay(100);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    delay(200);
+    return true;
+  }
+  else{
+    delay(100);
+    digitalWrite(csPin, 0);
+    digitalWrite(20, 1);
+    LoRa.setPins(csPin, resetPin, irqPin);
+    LoRa.begin(433E6);
+    delay(200);
+    return false;
+  }
+}
+
 void large(String tosdlarge, int tosendlarge){
   if(filereceivientstation == -1 && filesender == -1){
       delay(50);
@@ -2090,6 +2125,79 @@ void large(String tosdlarge, int tosendlarge){
       tofslarge += "0";
       interpreter(tofslarge);
   }
+}
+
+bool doFirmwareUpdate() {
+  delay(50);
+  LoRa.setFrequency(433.1);
+  SPI.transfer(0);
+  digitalWrite(csPin,1);
+  digitalWrite(20,0);
+  delay(100);
+  
+  SD.begin(csPin);
+  File updateFile = SD.open(UPDATE_FILE);
+  if (!updateFile) {
+    Serial.println("ERREUR: update.bin introuvable");
+    return false;
+  }
+
+  size_t updateSize = updateFile.size();
+  Serial.print("Taille update.bin = ");
+  Serial.println(updateSize);
+
+  if (updateSize == 0) {
+    Serial.println("ERREUR: fichier vide");
+    updateFile.close();
+    return false;
+  }
+
+  if (!Update.begin(updateSize)) {  // vérifie la partition
+    Serial.println("ERREUR: Update.begin()");
+    Update.printError(Serial);
+    updateFile.close();
+    return false;
+  }
+
+  uint8_t buffer[BUF_SIZE];
+  size_t written = 0;
+
+  Serial.println("Mise à jour en cours...");
+
+  while (updateFile.available()) {
+    size_t len = updateFile.read(buffer, BUF_SIZE);
+    if (len <= 0) break;
+
+    size_t w = Update.write(buffer, len);
+    written += w;
+
+    if (w != len) {
+      Serial.println("ERREUR: ecriture partielle");
+      Update.printError(Serial);
+      updateFile.close();
+      Update.abort();
+      return false;
+    }
+  }
+
+  updateFile.close();
+
+  if (!Update.end()) {
+    Serial.println("ERREUR: Update.end()");
+    Update.printError(Serial);
+    return false;
+  }
+
+  if (!Update.isFinished()) {
+    Serial.println("ERREUR: Update incomplet");
+    return false;
+  }
+
+  Serial.printf("Mise a jour OK (%u octets ecrits)\n", (unsigned)written);
+  Serial.println("Redemarrage...");
+  delay(1000);
+  ESP.restart();
+  return true;
 }
 
 void setup() {
@@ -2175,7 +2283,7 @@ void loop() {
     exportcache();
   }
 
-  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 2) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 4) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
     filetxdelai = (millis()/1000);
     exportfile();
@@ -2697,9 +2805,9 @@ void interpreter(String msg){
         rxok += ":";
         rxok += localAddress;
         if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(300, rxok);
+          scheduleCommand(400, rxok);
           if(getValue(msg, ':', 1).toInt() == localAddress){  
-            scheduleCommand(400, tempinload);
+            scheduleCommand(600, tempinload);
           }
         }
       }
@@ -2756,8 +2864,8 @@ void interpreter(String msg){
       rxok += ":";
       rxok += localAddress;
       if(tempinload.length() == getValue(msg, ':', 2).toInt()){
-        scheduleCommand(500, rxok);
-        interpreter(tempinload); // execution commande
+        scheduleCommand(400, rxok);
+        scheduleCommand(800, tempinload);
       }
     }
     if(cmd == "arok"){
@@ -3016,7 +3124,7 @@ void interpreter(String msg){
           tempisrf += filereceivientstation;
           tempisrf += ":isrf:";
           tempisrf += localAddress;
-          interpreter(tempisrf);
+          scheduleCommand(800, tempisrf);
         }
       }
     }
@@ -3075,6 +3183,29 @@ void interpreter(String msg){
       }
       else{
         Serial.println("fichier origine conserver");
+      }
+    }
+    if(cmd == "reboot"){
+      writetosd();
+      delay(500);
+      ESP.restart();
+    }
+    if(cmd == "upgrade"){
+      writetosd();
+      delay(500);
+      doFirmwareUpdate();
+    }
+    if(cmd == "version"){  
+      Serial.print("Version firmware : ");
+      Serial.println(FIRMWARE_VERSION);
+    }
+    if(cmd == "mkdir"){      
+      Serial.print(getValue(msg, ':', 1));
+      if(mkdirsd(getValue(msg, ':', 1))){
+        Serial.println(" crée avec succès.");
+      }
+      else{        
+        Serial.println(" non crée.");
       }
     }
 }
