@@ -111,6 +111,10 @@ int nbtogatefailfile = 0;
 int togateCountFile = 0;
 unsigned long lastair;
 
+// LoRa interrupt reception
+volatile bool loraPacketReceived = false;
+volatile int loraPacketSize = 0;
+
 // Tableaux
 
 struct DelayedCommand {
@@ -231,8 +235,7 @@ void togatePurgeOld() {
 
       digitalWrite(csPin,0);
       digitalWrite(20,1);
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6); 
+      loraRestart();
 
       // Supprimer cette entrée en décalant les suivantes
       for (int j = i; j < togateCount - 1; j++) {
@@ -383,8 +386,7 @@ void purgeToOldFile() {
     
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
   }
   
   // Si trop d'échecs, marquer la gate comme hors ligne
@@ -760,8 +762,7 @@ bool parseFile(String path) {
   
   digitalWrite(csPin,0);
   digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6);
+  loraRestart();
   Serial.println("PARSE terminé.");
   return true;
 }
@@ -952,8 +953,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   outf.close();
   digitalWrite(csPin,0);
   digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6);
+  loraRestart();
 
   Serial.printf("FINAL size=%u/%u CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC);
   if(finalSize == expectedSize && finalCRC == fileCRC){
@@ -1522,8 +1522,7 @@ String exportdata(String ver){
 
     digitalWrite(csPin,0);
     digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
+    loraRestart();
   
   int i = 0;
   while(getValue(datastructver, ';', i) != "") {
@@ -1715,8 +1714,7 @@ void measuretodump(int ver){
 
     digitalWrite(csPin,0);
     digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
+    loraRestart();
   
 }
 
@@ -1791,8 +1789,7 @@ void readsd(bool allrecover){
 
       initGaloisField();
       
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6);
+      loraRestart();
 
 }
 
@@ -1869,8 +1866,7 @@ void writetosd(){
     }
     digitalWrite(csPin,0);
     digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
+    loraRestart();
 }
 
 bool exportcache() {
@@ -1925,8 +1921,7 @@ bool exportcache() {
     fichier.close();
     digitalWrite(csPin,0);
     digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6);
+    loraRestart();
     String tempstr = ligne;
     int tempid = getValue(tempstr, ':', 5).toInt();
     togateAddCommand(tempid, tempstr);
@@ -1936,8 +1931,7 @@ bool exportcache() {
     fichier.close();
     digitalWrite(csPin,0);
     digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6);
+    loraRestart();
     return false;
   }
 
@@ -1956,8 +1950,7 @@ bool exportfile() {
     Serial.println("PBsd");
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     return false;
   }
   
@@ -1967,8 +1960,7 @@ bool exportfile() {
     infilecache = false;
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     return false;
   }
 
@@ -1981,8 +1973,7 @@ bool exportfile() {
     infilecache = false;
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     delay(200);
     String tempfend = "send:";
     tempfend += filereceivientstation;
@@ -2028,8 +2019,7 @@ bool exportfile() {
     
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     
     String ligneStr = String(ligne);
     if (ligneStr.length() > 0) {
@@ -2060,8 +2050,7 @@ bool exportfile() {
 
   digitalWrite(csPin, 0);
   digitalWrite(20, 1);
-  LoRa.setPins(csPin, resetPin, irqPin);
-  LoRa.begin(433E6);
+  loraRestart();
   return false;
 }
 
@@ -2084,8 +2073,7 @@ void importfile(String file, String input){
   }
   digitalWrite(csPin,0);
   digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6); 
+  loraRestart();
 }
 
 bool remfromsd(String rmpath){
@@ -2101,8 +2089,7 @@ bool remfromsd(String rmpath){
     delay(100);
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     delay(200);
     return true;
   }
@@ -2110,8 +2097,7 @@ bool remfromsd(String rmpath){
     delay(100);
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     delay(200);
     return false;
   }
@@ -2130,8 +2116,7 @@ bool mkdirsd(String rmpath){
     delay(100);
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     delay(200);
     return true;
   }
@@ -2139,8 +2124,7 @@ bool mkdirsd(String rmpath){
     delay(100);
     digitalWrite(csPin, 0);
     digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    loraRestart();
     delay(200);
     return false;
   }
@@ -2165,8 +2149,7 @@ void large(String tosdlarge, int tosendlarge){
 
       digitalWrite(csPin,0);
       digitalWrite(20,1);
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6); 
+      loraRestart();
 
       String tofslarge = "stft:";
       tofslarge += tosendlarge;
@@ -2251,8 +2234,24 @@ bool doFirmwareUpdate() {
   return true;
 }
 
+// --- LoRa interrupt callback ---
+// Appelé depuis l'ISR quand un paquet LoRa est reçu
+void onLoRaInterrupt(int packetSize) {
+  loraPacketReceived = true;
+  loraPacketSize = packetSize;
+}
+
+// --- LoRa reinit helper ---
+// Réinitialise LoRa après un accès SD et active le mode réception par interruption
+void loraRestart() {
+  LoRa.setPins(csPin, resetPin, irqPin);
+  LoRa.begin(433E6);
+  LoRa.onReceive(onLoRaInterrupt);
+  LoRa.receive();
+}
+
 // --- CPU Frequency Scaling ---
-// idle = 20 MHz (polling, attente), turbo = 160 MHz (traitement actif)
+// idle = 20 MHz (attente), turbo = 160 MHz (traitement actif, SPI)
 
 void cpuTurbo() {
   setCpuFrequencyMhz(160);
@@ -2279,6 +2278,10 @@ void setup() {
     while (true);                       // if failed, do nothing
   }
 
+  // Activer la réception LoRa par interruption (pas de polling SPI)
+  LoRa.onReceive(onLoRaInterrupt);
+  LoRa.receive();
+
   if(rtc.getLocalEpoch() > 10){
     readsd(1);
   }
@@ -2302,8 +2305,14 @@ void setup() {
   Serial.println("LoRa init succeeded.");
   Serial.println(localAddress);
   Serial.println(millis());
+  Serial.print("CPU freq: ");
+  Serial.print(getCpuFrequencyMhz());
+  Serial.println(" MHz");
   actiontimer = (millis()/1000);
   cpuIdle();
+  Serial.print("CPU idle: ");
+  Serial.print(getCpuFrequencyMhz());
+  Serial.println(" MHz");
 }
 
 void loop() {
@@ -2312,7 +2321,11 @@ void loop() {
     interpreter(Serial.readString());
     delay(100);
    }
-  onReceive(LoRa.parsePacket());
+  // Réception LoRa par interruption (plus de polling SPI continu)
+  if (loraPacketReceived) {
+    loraPacketReceived = false;
+    onReceive(loraPacketSize);
+  }
       
   if(pingphase == 1 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
@@ -2398,7 +2411,20 @@ void loop() {
   togatePurgeOld();
   purgeToOldFile();
   removeExpiredValues();
+
+  // Diagnostic CPU frequency (toutes les 30s)
+  static unsigned long lastCpuLog = 0;
+  if (millis() - lastCpuLog > 30000) {
+    lastCpuLog = millis();
+    Serial.print("CPU: ");
+    Serial.print(getCpuFrequencyMhz());
+    Serial.print("MHz APB: ");
+    Serial.print(getApbFrequency() / 1000000);
+    Serial.println("MHz");
+  }
+
   cpuIdle();
+  delay(10);  // Permet au scheduler de réduire la fréquence CPU
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
@@ -2463,6 +2489,8 @@ void sendMessage(bool wake, String outgoing, int destination) {
   LoRa.write(outgoing.length());        // add payload length
   LoRa.print(outgoing);                 // add payload
   LoRa.endPacket();                     // finish packet and send it
+  LoRa.onReceive(onLoRaInterrupt);     // réenregistrer callback
+  LoRa.receive();                       // réactiver mode réception par interruption
   msgCount++;                           // increment message ID
   actiontimer = (millis()/1000);
   lastair = millis();
