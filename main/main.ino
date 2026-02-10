@@ -10,12 +10,18 @@
 #include "Adafruit_BME680.h"
 #include <Preferences.h>
 #include <Update.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_AHT10.h>
+
+Adafruit_BMP280 bmp;
+Adafruit_AHT10 aht;
 
 Preferences prefs;
 
 ESP32Time rtc;
 
- const String FIRMWARE_VERSION = "1.3.0";
+const String FIRMWARE_VERSION = "1.3.0";
 
 #define uS_TO_S_FACTOR 1000000
 
@@ -1587,6 +1593,9 @@ void startsensor(){
   if (!bme.begin()) {
     Serial.println(F("Could not find a valid BME680 sensor, check wiring!"));
   }
+else{
+  Serial.println(F("BME680 OK"));
+}
 
   // Set up oversampling and filter initialization
   bme.setTemperatureOversampling(BME680_OS_8X);
@@ -1594,6 +1603,28 @@ void startsensor(){
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
   bme.setGasHeater(320, 150); // 320*C for 150 ms
+
+if (aht.begin() != true) {
+Serial.println(F("AHT20 not connected or fail to load calibration coefficient")); //(F()) save string to flash & keeps dynamic memory free
+}
+else{
+  Serial.println(F("AHT20 OK"));
+}
+
+if (!bmp.begin()) {
+Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+}
+else{
+  Serial.println(F("BMP280 OK"));
+}
+ 
+/* Default settings from datasheet. */
+bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, /* Operating Mode. */
+Adafruit_BMP280::SAMPLING_X2, /* Temp. oversampling */
+Adafruit_BMP280::SAMPLING_X16, /* Pressure oversampling */
+Adafruit_BMP280::FILTER_X16, /* Filtering. */
+Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+  
 }
 
 void measuretodump(int ver){
@@ -1642,6 +1673,25 @@ void measuretodump(int ver){
 
     Serial.println(tosdarg);
   }
+  if(ver == 3){
+  sensors_event_t humidity, temp;
+  aht.getEvent(&humidity, &temp);// populate temp and humidity objects with fresh data
+  tosdarg += "ntemp:";
+    tosdarg += temp.temperature;
+    tosdarg += ";";
+    tosdarg += "nhum:";
+    tosdarg += humidity.relative_humidity;
+    tosdarg += ";";
+    tosdarg += "npres:";
+    tosdarg += (bmp.readPressure());
+    tosdarg += ";";
+    tosdarg += "ntime:";
+    tosdarg += (rtc.getLocalEpoch());
+    tosdarg += ";";
+
+    Serial.println(tosdarg);
+  }
+  
     delay(50);
     LoRa.setFrequency(433.1);
     SPI.transfer(0);
@@ -1946,6 +1996,7 @@ bool exportfile() {
     Serial.print("Fermeture transmission fichier avec :");
     Serial.println(filereceivientstation);
     filereceivientstation = -1;
+    isfdeson = false;
     return false;
   }
 
@@ -2201,8 +2252,7 @@ bool doFirmwareUpdate() {
 }
 
 void setup() {
-  Serial.begin(9600);                   // initialize serial
-  while (!Serial);
+  Serial.begin(9600);
 
   prefs.begin("mycromesh", false);
   
