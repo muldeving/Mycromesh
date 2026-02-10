@@ -2251,6 +2251,17 @@ bool doFirmwareUpdate() {
   return true;
 }
 
+// --- CPU Frequency Scaling ---
+// idle = 20 MHz (polling, attente), turbo = 160 MHz (traitement actif)
+
+void cpuTurbo() {
+  setCpuFrequencyMhz(160);
+}
+
+void cpuIdle() {
+  setCpuFrequencyMhz(20);
+}
+
 void setup() {
   Serial.begin(9600);
 
@@ -2292,6 +2303,7 @@ void setup() {
   Serial.println(localAddress);
   Serial.println(millis());
   actiontimer = (millis()/1000);
+  cpuIdle();
 }
 
 void loop() {
@@ -2386,6 +2398,7 @@ void loop() {
   togatePurgeOld();
   purgeToOldFile();
   removeExpiredValues();
+  cpuIdle();
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
@@ -2417,7 +2430,7 @@ void checkDelayedCommands() {
 }
 
 void sendMessage(bool wake, String outgoing, int destination) {
-
+  cpuTurbo();
   if(millis() < (lastair+200)){
     if(wake == true){
       String temptosend = "trsm:";
@@ -2457,6 +2470,7 @@ void sendMessage(bool wake, String outgoing, int destination) {
 
 void onReceive(int packetSize) {
   if (packetSize == 0) return;          // if there's no packet, return
+  cpuTurbo();
   actiontimer = (millis()/1000);
 
   // read packet header bytes:
@@ -2771,6 +2785,7 @@ void changepval(String parn, String parv){
 }
 
 void interpreter(String msg){
+  cpuTurbo();
   String cmd = getValue(msg, ':', 0);
   actiontimer = (millis()/1000);
 
