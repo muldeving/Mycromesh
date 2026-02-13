@@ -1,5 +1,4 @@
-#include <SPI.h>
-#include <LoRa.h>
+#include "LiteLora/src/LiteLora.h"
 #include <limits.h>
 #include <ESP32Time.h>
 #include "esp_sleep.h"
@@ -20,6 +19,8 @@ Adafruit_AHT10 aht;
 Preferences prefs;
 
 ESP32Time rtc;
+
+LiteLora lora;
 
 const String FIRMWARE_VERSION = "1.3.0";
 
@@ -72,7 +73,6 @@ const int filetimeout = 300;
 const int filetxtimeout = 60;
 
 const int csPin = 21;          // LoRa radio chip select
-const int resetPin = -1;       // LoRa radio reset
 const int irqPin = 8;          // change for your board; must be a hardware interrupt pin
 
 // variables systeme
@@ -173,6 +173,18 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
+void loraToSD() {
+    lora.releaseBus();
+    digitalWrite(20, 0);
+    delay(100);
+    if (!SD.begin(7)) { Serial.println("PBsd"); }
+}
+
+void sdToLora() {
+    digitalWrite(20, 1);
+    lora.acquireBus();
+}
+
 bool togateAddCommand(int id, String command) {
   if (togateCount >= MAX_TOGATE_COMMANDS) {
     Serial.println("[Togate] Erreur : file pleine, commande non ajoutée.");
@@ -212,13 +224,7 @@ void togatePurgeOld() {
       }
 
       delay(50);
-      LoRa.setFrequency(433.1);
-      SPI.transfer(0);
-      digitalWrite(csPin,1);
-      digitalWrite(20,0);
-      delay(100);
-
-      if (!SD.begin(7)) {Serial.println("PBsd");}
+      loraToSD();
       File myFile;
       myFile = SD.open("/togate.cache", FILE_APPEND);   
       if (myFile) {
@@ -229,10 +235,7 @@ void togatePurgeOld() {
         Serial.println("PBfile");
       }
 
-      digitalWrite(csPin,0);
-      digitalWrite(20,1);
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6); 
+      sdToLora();
 
       // Supprimer cette entrée en décalant les suivantes
       for (int j = i; j < togateCount - 1; j++) {
@@ -362,29 +365,16 @@ void purgeToOldFile() {
   if (hasExpired && linesToRestore.length() > 0) {
     // Écrire les lignes expirées dans tx.txt
     delay(50);
-    LoRa.setFrequency(433.1);
-    SPI.transfer(0);
-    digitalWrite(csPin, 1);
-    digitalWrite(20, 0);
-    delay(100);
-    
-    if (!SD.begin(7)) {
-      Serial.println("[PurgeFile] Erreur SD");
+    loraToSD();
+    File myFile = SD.open("/tx.txt", FILE_APPEND);
+    if (myFile) {
+      myFile.print(linesToRestore);
+      myFile.close();
+      Serial.println("[PurgeFile] Lignes restaurées dans tx.txt");
     } else {
-      File myFile = SD.open("/tx.txt", FILE_APPEND);
-      if (myFile) {
-        myFile.print(linesToRestore);
-        myFile.close();
-        Serial.println("[PurgeFile] Lignes restaurées dans tx.txt");
-      } else {
-        Serial.println("[PurgeFile] Erreur ouverture tx.txt");
-      }
+      Serial.println("[PurgeFile] Erreur ouverture tx.txt");
     }
-    
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
   }
   
   // Si trop d'échecs, marquer la gate comme hors ligne
@@ -701,12 +691,7 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 bool parseFile(String path) {
   Serial.println("\n=== PARSE ===");
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PB");}
+  loraToSD();
   if (!SD.exists(path)) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" introuvable"); return false; }
   File inF = SD.open(path, FILE_READ);
   if (!inF) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" inouvrable"); return false; }
@@ -758,10 +743,7 @@ bool parseFile(String path) {
   
   if (SD.exists("/large.cmd") && path == "/large.cmd") SD.remove("/large.cmd");
   
-  digitalWrite(csPin,0);
-  digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6);
+  sdToLora();
   Serial.println("PARSE terminé.");
   return true;
 }
@@ -770,12 +752,7 @@ bool parseFile(String path) {
 void compileFile(String fnameced, int origin, int toremof) {
   Serial.println("\n=== COMPILE ===");
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PB");}
+  loraToSD();
   if (!SD.exists("/rx.txt")) { Serial.println("ERREUR: /rx.txt introuvable"); return; }
   File rx = SD.open("/rx.txt", FILE_READ);
   if (!rx) { Serial.println("ERREUR ouverture rx.txt"); return; }
@@ -950,10 +927,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   }
   
   outf.close();
-  digitalWrite(csPin,0);
-  digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6);
+  sdToLora();
 
   Serial.printf("FINAL size=%u/%u CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC);
   if(finalSize == expectedSize && finalCRC == fileCRC){
@@ -1485,9 +1459,7 @@ void startprocedure(){
 
 String exportdata(String ver){
   delay(50);
-  LoRa.setFrequency(433.1);
-  delay(50);
-  if (!SD.begin(7)) {Serial.println("PB");}  
+  loraToSD();
   File myFile;
 
   myFile = SD.open("/data.ver", FILE_READ);       
@@ -1520,11 +1492,8 @@ String exportdata(String ver){
       Serial.println("PBfile");
     }
 
-    digitalWrite(csPin,0);
-    digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
-  
+    sdToLora();
+
   int i = 0;
   while(getValue(datastructver, ';', i) != "") {
     String parsver = getValue(datastructver, ';', i);
@@ -1693,18 +1662,12 @@ void measuretodump(int ver){
   }
   
     delay(50);
-    LoRa.setFrequency(433.1);
-    SPI.transfer(0);
-    digitalWrite(csPin,1);
-    digitalWrite(20,0);
-    delay(100);
-
-    if (!SD.begin(7)) {Serial.println("PBsd");}
+    loraToSD();
     File myFile;
     String path = "/";
     path += String(ver);
     path += ".datadump";
-    myFile = SD.open(path, FILE_APPEND);   
+    myFile = SD.open(path, FILE_APPEND);
     if (myFile) {
       myFile.print(tosdarg);
       myFile.close();
@@ -1713,17 +1676,12 @@ void measuretodump(int ver){
       Serial.println("PBfile");
     }
 
-    digitalWrite(csPin,0);
-    digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
-  
+    sdToLora();
+
 }
 
 void readsd(bool allrecover){
-      LoRa.setFrequency(433.1);
-      
-      if (!SD.begin(7)) {Serial.println("PB");}  
+      loraToSD();
        File myFile;
        
       if (allrecover == 1){ 
@@ -1790,22 +1748,16 @@ void readsd(bool allrecover){
       crontabString = sdtocron;
 
       initGaloisField();
-      
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6);
+
+      sdToLora();
 
 }
 
 void writetosd(){
     delay(50);
-    LoRa.setFrequency(433.1);
-    SPI.transfer(0);
-    digitalWrite(csPin,1);
-    digitalWrite(20,0);
-    delay(100);
+    loraToSD();
     String vartosd = exportEdgesAstmapCommand();
-    
-    if (!SD.begin(7)) {Serial.println("PB");}
+
     File testFile = SD.open("/map.cfg", FILE_WRITE);
     if (testFile) {
       testFile.println(vartosd);
@@ -1867,20 +1819,12 @@ void writetosd(){
     else{
       Serial.println("PB");
     }
-    digitalWrite(csPin,0);
-    digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6); 
+    sdToLora();
 }
 
 bool exportcache() {
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PB");}
+  loraToSD();
   File fichier = SD.open("/togate.cache", FILE_READ);
   if (!fichier) {
     Serial.println("Fichier introuvable.");
@@ -1923,10 +1867,7 @@ bool exportcache() {
     Serial.println(ligne);
     prefs.putUInt("offset", offset);
     fichier.close();
-    digitalWrite(csPin,0);
-    digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6);
+    sdToLora();
     String tempstr = ligne;
     int tempid = getValue(tempstr, ':', 5).toInt();
     togateAddCommand(tempid, tempstr);
@@ -1934,10 +1875,7 @@ bool exportcache() {
     return true;
   } else {
     fichier.close();
-    digitalWrite(csPin,0);
-    digitalWrite(20,1);
-    LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-    LoRa.begin(433E6);
+    sdToLora();
     return false;
   }
 
@@ -1946,29 +1884,13 @@ bool exportcache() {
 
 bool exportfile() {
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin, 1);
-  digitalWrite(20, 0);
-  delay(100);
-  
-  if (!SD.begin(7)) {
-    Serial.println("PBsd");
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
-    return false;
-  }
-  
+  loraToSD();
+
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
     Serial.println("Fichier introuvable.");
     infilecache = false;
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     return false;
   }
 
@@ -1979,10 +1901,7 @@ bool exportfile() {
     SD.remove("/tx.txt");
     prefs.remove("offsetfile");
     infilecache = false;
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     delay(200);
     String tempfend = "send:";
     tempfend += filereceivientstation;
@@ -2025,12 +1944,9 @@ bool exportfile() {
     ligne[index] = '\0';
     
     prefs.putUInt("offsetfile", offsetfile);
-    
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
-    
+
+    sdToLora();
+
     String ligneStr = String(ligne);
     if (ligneStr.length() > 0) {
       Serial.print("Ligne exportée : ");
@@ -2058,23 +1974,15 @@ bool exportfile() {
     }
   }
 
-  digitalWrite(csPin, 0);
-  digitalWrite(20, 1);
-  LoRa.setPins(csPin, resetPin, irqPin);
-  LoRa.begin(433E6);
+  sdToLora();
   return false;
 }
 
 void importfile(String file, String input){
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PBsd");}
+  loraToSD();
   File myFile;
-  myFile = SD.open(file, FILE_APPEND);   
+  myFile = SD.open(file, FILE_APPEND);
   if (myFile) {
     myFile.println(input);
     myFile.close();
@@ -2082,36 +1990,22 @@ void importfile(String file, String input){
   else{
     Serial.println("PBfile");
   }
-  digitalWrite(csPin,0);
-  digitalWrite(20,1);
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-  LoRa.begin(433E6); 
+  sdToLora();
 }
 
 bool remfromsd(String rmpath){
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PBsd");}
+  loraToSD();
 
   if(SD.remove(rmpath)){
     delay(100);
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     delay(200);
     return true;
   }
   else{
     delay(100);
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     delay(200);
     return false;
   }
@@ -2119,28 +2013,17 @@ bool remfromsd(String rmpath){
 
 bool mkdirsd(String rmpath){
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  if (!SD.begin(7)) {Serial.println("PBsd");}
+  loraToSD();
 
   if(SD.mkdir(rmpath)){
     delay(100);
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     delay(200);
     return true;
   }
   else{
     delay(100);
-    digitalWrite(csPin, 0);
-    digitalWrite(20, 1);
-    LoRa.setPins(csPin, resetPin, irqPin);
-    LoRa.begin(433E6);
+    sdToLora();
     delay(200);
     return false;
   }
@@ -2149,12 +2032,7 @@ bool mkdirsd(String rmpath){
 void large(String tosdlarge, int tosendlarge){
   if(filereceivientstation == -1 && filesender == -1){
       delay(50);
-      LoRa.setFrequency(433.1);
-      SPI.transfer(0);
-      digitalWrite(csPin,1);
-      digitalWrite(20,0);
-      delay(100);
-      if (!SD.begin(7)) {Serial.println("PB");}
+      loraToSD();
 
       if (SD.exists("/large.cmd")) SD.remove("/large.cmd");
       File testFile = SD.open("/large.cmd", FILE_WRITE);
@@ -2163,10 +2041,7 @@ void large(String tosdlarge, int tosendlarge){
         testFile.close();
       }
 
-      digitalWrite(csPin,0);
-      digitalWrite(20,1);
-      LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
-      LoRa.begin(433E6); 
+      sdToLora();
 
       String tofslarge = "stft:";
       tofslarge += tosendlarge;
@@ -2180,13 +2055,7 @@ void large(String tosdlarge, int tosendlarge){
 
 bool doFirmwareUpdate() {
   delay(50);
-  LoRa.setFrequency(433.1);
-  SPI.transfer(0);
-  digitalWrite(csPin,1);
-  digitalWrite(20,0);
-  delay(100);
-  
-  SD.begin(csPin);
+  loraToSD();
   File updateFile = SD.open(UPDATE_FILE);
   if (!updateFile) {
     Serial.println("ERREUR: update.bin introuvable");
@@ -2271,12 +2140,15 @@ void setup() {
 
   Serial.println("LoRa Duplex");
 
-  // override the default CS, reset, and IRQ pins (optional)
-  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+  LiteLoraConfig cfg = LiteLora::defaultConfig();
+  cfg.csPin = csPin;
+  cfg.dio0Pin = irqPin;
+  cfg.frequency = 433000000;
+  cfg.bandwidth = 125000;
 
-  if (!LoRa.begin(433E6)) {             // initialize ratio at 915 MHz
+  if (!lora.begin(cfg)) {
     Serial.println("LoRa init failed. Check your connections.");
-    while (true);                       // if failed, do nothing
+    while (true);
   }
 
   if(rtc.getLocalEpoch() > 10){
@@ -2303,6 +2175,7 @@ void setup() {
   Serial.println(localAddress);
   Serial.println(millis());
   actiontimer = (millis()/1000);
+  lora.receive();
   cpuIdle();
 }
 
@@ -2312,7 +2185,7 @@ void loop() {
     interpreter(Serial.readString());
     delay(100);
    }
-  onReceive(LoRa.parsePacket());
+  if (lora.available()) { onReceive(); }
       
   if(pingphase == 1 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
@@ -2356,7 +2229,7 @@ void loop() {
       stationstat = 1;
       Serial.println("idle");
       writetosd();
-      LoRa.receive();
+      lora.receive();
       delay(100);
       int nextwup = nextWakeup() - 5;
       Serial.println("Going to sleep now");    
@@ -2450,39 +2323,46 @@ void sendMessage(bool wake, String outgoing, int destination) {
   }
   
   if(wake == true){
-    LoRa.beginPacket();                   // start packet
-    LoRa.print("wake");                 // add payload
-    LoRa.endPacket();                     // finish packet and send it
+    uint8_t wakeBuf[] = {'w', 'a', 'k', 'e'};
+    lora.transmit(wakeBuf, 4);
+    lora.waitTransmitDone();
+    lora.receive();
     delay(500);
   }
-    
-  LoRa.beginPacket();                   // start packet
-  LoRa.write(destination);              // add destination address
-  LoRa.write(localAddress);             // add sender address
-  LoRa.write(msgCount);                 // add message ID
-  LoRa.write(outgoing.length());        // add payload length
-  LoRa.print(outgoing);                 // add payload
-  LoRa.endPacket();                     // finish packet and send it
+
+  uint8_t payloadLen = outgoing.length();
+  uint8_t txBuf[255];
+  txBuf[0] = (uint8_t)destination;
+  txBuf[1] = (uint8_t)localAddress;
+  txBuf[2] = msgCount;
+  txBuf[3] = payloadLen;
+  memcpy(&txBuf[4], outgoing.c_str(), payloadLen);
+  lora.transmit(txBuf, 4 + payloadLen);
+  lora.waitTransmitDone();
+  lora.receive();
   msgCount++;                           // increment message ID
   actiontimer = (millis()/1000);
   lastair = millis();
 }
 
-void onReceive(int packetSize) {
-  if (packetSize == 0) return;          // if there's no packet, return
+void onReceive() {
+  uint8_t rxBuf[255];
+  uint8_t packetSize = lora.readPacket(rxBuf, sizeof(rxBuf));
+  if (packetSize == 0) return;
+  lora.receive();
+
   cpuTurbo();
   actiontimer = (millis()/1000);
 
   // read packet header bytes:
-  int recipient = LoRa.read();          // recipient address
-  sender = LoRa.read();            // sender address
-  byte incomingMsgId = LoRa.read();     // incoming msg ID
-  byte incomingLength = LoRa.read();    // incoming msg length
+  int recipient = rxBuf[0];
+  sender = rxBuf[1];
+  byte incomingMsgId = rxBuf[2];
+  byte incomingLength = rxBuf[3];
 
   String incoming = "";
-
-  while (LoRa.available()) {
-    incoming += (char)LoRa.read();
+  for (uint8_t i = 4; i < packetSize; i++) {
+    incoming += (char)rxBuf[i];
   }
 
   if (incomingLength != incoming.length()) {   // check length for error
@@ -2519,11 +2399,11 @@ void onReceive(int packetSize) {
   }
     
     if(getValue(incoming, ':', 0) == "ping"){    
-      Serial.println("Snr: " + String(LoRa.packetRssi()));
+      Serial.println("Snr: " + String(lora.packetRssi()));
       String rping = "trsms:";
       rping += String(sender);
       rping += ":rpin:";
-      rping += String(LoRa.packetRssi());
+      rping += String(lora.packetRssi());
       scheduleCommand((300*localAddress), rping);                         // skip rest of function
     }        
     if(getValue(incoming, ':', 0) == "difh"){
@@ -2807,11 +2687,11 @@ void interpreter(String msg){
      sendMessage(0, msg.substring(6+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
   }
     if(cmd == "ping"){    
-      Serial.println("Snr: " + String(LoRa.packetRssi()));
+      Serial.println("Snr: " + String(lora.packetRssi()));
       String rping = "trsms:";
       rping += String(sender);
       rping += ":rpin:";
-      rping += String(LoRa.packetRssi());
+      rping += String(lora.packetRssi());
       scheduleCommand(800, rping);
     }    
     if(cmd == "rpin"){
@@ -2821,9 +2701,9 @@ void interpreter(String msg){
       Serial.print("TX : ");
       Serial.println(msg.substring(5, msg.length()));
       Serial.print("RX : ");
-      Serial.println(LoRa.packetRssi());
+      Serial.println(lora.packetRssi());
       Serial.print("GLOB : ");
-      int glob = ((LoRa.packetRssi())+((msg.substring(5, msg.length())).toInt()))/2;
+      int glob = ((lora.packetRssi())+((msg.substring(5, msg.length())).toInt()))/2;
       glob = abs(glob);
       Serial.println(glob);
       addOrUpdateEdge(localAddress, sender, glob);

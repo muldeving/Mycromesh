@@ -1,0 +1,3 @@
+[submodule "main/LiteLora"]
+	path = main/LiteLora
+	url = https://github.com/muldeving/LiteLora.git
