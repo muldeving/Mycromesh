@@ -1,4 +1,4 @@
-#include "LiteLora/src/LiteLora.h"
+#include "LiteLora.h"
 #include <limits.h>
 #include <ESP32Time.h>
 #include "esp_sleep.h"
@@ -689,6 +689,7 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 
 // ---------------- PARSE ----------------
 bool parseFile(String path) {
+  cpuTurbo();
   Serial.println("\n=== PARSE ===");
   delay(50);
   loraToSD();
@@ -750,6 +751,7 @@ bool parseFile(String path) {
 
 // ---------------- COMPILE ----------------
 void compileFile(String fnameced, int origin, int toremof) {
+  cpuTurbo();
   Serial.println("\n=== COMPILE ===");
   delay(50);
   loraToSD();
@@ -2176,7 +2178,6 @@ void setup() {
   Serial.println(millis());
   actiontimer = (millis()/1000);
   lora.receive();
-  cpuIdle();
 }
 
 void loop() {
@@ -2303,7 +2304,6 @@ void checkDelayedCommands() {
 }
 
 void sendMessage(bool wake, String outgoing, int destination) {
-  cpuTurbo();
   if(millis() < (lastair+200)){
     if(wake == true){
       String temptosend = "trsm:";
@@ -2351,7 +2351,6 @@ void onReceive() {
   if (packetSize == 0) return;
   lora.receive();
 
-  cpuTurbo();
   actiontimer = (millis()/1000);
 
   // read packet header bytes:
@@ -2664,8 +2663,7 @@ void changepval(String parn, String parv){
   }
 }
 
-void interpreter(String msg){
-  cpuTurbo();
+void interpreter(String msg){  
   String cmd = getValue(msg, ':', 0);
   actiontimer = (millis()/1000);
 
