@@ -956,7 +956,7 @@ void compileFile(String fnameced, int origin, int toremof) {
     interpreter(tempfeok);
     if(fnameced == "/large.cmd"){
       Serial.println(tointlarge);
-      scheduleCommand(2000, tointlarge);
+      scheduleCommand(500, tointlarge);
     }
   }
 }
@@ -1223,7 +1223,7 @@ bool dijkstra(int src, int dest, String outgoing) {
   tosenddijk += nextStep;
   tosenddijk += ":";
   tosenddijk += outgoing;
-  scheduleCommand(500, tosenddijk); 
+  scheduleCommand(50, tosenddijk);
   return true;
 }
 
@@ -2188,19 +2188,19 @@ void loop() {
    }
   if (lora.available()) { onReceive(); }
       
-  if(pingphase == 1 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 1 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 2;
     Serial.println("ping phase 2");
     tmps = (millis()/1000);
   }
-  if(pingphase == 2 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 2 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 3;
     Serial.println("ping phase 3");
     tmps = (millis()/1000);
   }
-  if(pingphase == 3 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 3 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     pingphase = 0;
     String outgoingumap = exportEdgesContainingVertex(localAddress);
     Serial.println(outgoingumap);
@@ -2214,12 +2214,12 @@ void loop() {
     startprocedure();
   }
 
-  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 5) || ltgdel > (millis()/1000))){
+  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
     exportcache();
   }
 
-  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 4) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 2) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
     filetxdelai = (millis()/1000);
     exportfile();
@@ -2260,7 +2260,7 @@ void loop() {
     filesender = -1;
     Serial.println("Echec de recepetion fichier (TIMEOUT)");
   }
-  if(millis() >= (lastair + 200) || millis() < lastair){
+  if(millis() >= (lastair + 15) || millis() < lastair){
     checkDelayedCommands();
   }
   if(millis() >= (lastair + 1000) || millis() < lastair){
@@ -2304,20 +2304,20 @@ void checkDelayedCommands() {
 }
 
 void sendMessage(bool wake, String outgoing, int destination) {
-  if(millis() < (lastair+200)){
+  if(millis() < (lastair+15)){
     if(wake == true){
       String temptosend = "trsm:";
       temptosend += destination;
       temptosend += ":";
       temptosend += outgoing;
-      scheduleCommand(200, temptosend);
+      scheduleCommand(15, temptosend);
     }
     else{
       String temptosend = "trsms:";
       temptosend += destination;
       temptosend += ":";
-      temptosend += outgoing;     
-      scheduleCommand(200, temptosend); 
+      temptosend += outgoing;
+      scheduleCommand(15, temptosend);
     }
     return;
   }
@@ -2393,7 +2393,7 @@ void onReceive() {
         String rumap = "trsm:";
         rumap += "0:";
         rumap += incoming;
-        scheduleCommand((300*localAddress), rumap); 
+        scheduleCommand((20*localAddress), rumap);
     }
   }
     
@@ -2403,15 +2403,15 @@ void onReceive() {
       rping += String(sender);
       rping += ":rpin:";
       rping += String(lora.packetRssi());
-      scheduleCommand((300*localAddress), rping);                         // skip rest of function
+      scheduleCommand((20*localAddress), rping);                         // skip rest of function
     }        
     if(getValue(incoming, ':', 0) == "difh"){
       if (!findValue(getValue(incoming, ':', 1))) {
-        delay(1000-660);
+        delay(1000-960);
         rtc.setTime(((getValue(incoming, ':', 2)).toInt())+1);
         Serial.println(getValue(incoming, ':', 2));
         addValue(getValue(incoming, ':', 1));
-        delay(300*localAddress);
+        delay(20*localAddress);
         String tosendtimestamp = "difh:";
         tosendtimestamp += getValue(incoming, ':', 1);
         tosendtimestamp += ":";
@@ -2422,7 +2422,7 @@ void onReceive() {
    }
     return;   
   }
-  scheduleCommand(200, incoming);
+  scheduleCommand(15, incoming);
   lastair = millis();
 }
 
@@ -2443,7 +2443,7 @@ String getValue(String data, char separator, int index)
 }
 
 void acth(){
-  delay(500);
+  delay(50);
   timegeth = millis();
   sendMessage(1, "geth", findNearestVertex(localAddress));
 }
@@ -2677,11 +2677,11 @@ void interpreter(String msg){
     Serial.println(msg.substring(5, msg.length()));
   }
     if(cmd == "trsm"){
-     delay(50);
+     delay(10);
      sendMessage(1, msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
   }
   if(cmd == "trsms"){
-      delay(50);
+      delay(10);
      sendMessage(0, msg.substring(6+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
   }
     if(cmd == "ping"){    
@@ -2690,8 +2690,8 @@ void interpreter(String msg){
       rping += String(sender);
       rping += ":rpin:";
       rping += String(lora.packetRssi());
-      scheduleCommand(800, rping);
-    }    
+      scheduleCommand(50, rping);
+    }
     if(cmd == "rpin"){
       Serial.println("-----------------------------------------");
       Serial.print("ping : ");
@@ -2747,10 +2747,10 @@ void interpreter(String msg){
         rxok += getValue(msg, ':', 4);
         rxok += ":";
         rxok += localAddress;
-        if(tempinload.length() == getValue(msg, ':', 3).toInt()){    
-          scheduleCommand(400, rxok);
-          if(getValue(msg, ':', 1).toInt() == localAddress){  
-            scheduleCommand(600, tempinload);
+        if(tempinload.length() == getValue(msg, ':', 3).toInt()){
+          scheduleCommand(30, rxok);
+          if(getValue(msg, ':', 1).toInt() == localAddress){
+            scheduleCommand(80, tempinload);
           }
         }
       }
@@ -2807,8 +2807,8 @@ void interpreter(String msg){
       rxok += ":";
       rxok += localAddress;
       if(tempinload.length() == getValue(msg, ':', 2).toInt()){
-        scheduleCommand(400, rxok);
-        scheduleCommand(800, tempinload);
+        scheduleCommand(30, rxok);
+        scheduleCommand(80, tempinload);
       }
     }
     if(cmd == "arok"){
@@ -2906,7 +2906,7 @@ void interpreter(String msg){
       Serial.println(rtc.getTime("%A, %B %d %Y %H:%M:%S"));
     }
     if(cmd == "seth"){
-      unsigned long delaygeth = ((((millis() - timegeth) - 500) / 2));
+      unsigned long delaygeth = ((((millis() - timegeth) - 50) / 2));
       Serial.print("delay : ");
       Serial.println(delaygeth);
       delay(1000 - delaygeth);
@@ -2918,7 +2918,7 @@ void interpreter(String msg){
       }
     }
     if(cmd == "geth"){
-      delay(500);
+      delay(50);
       String tosendtimestamp = "seth:";
       tosendtimestamp += String(rtc.getLocalEpoch());
       Serial.println(tosendtimestamp);
@@ -2951,17 +2951,17 @@ void interpreter(String msg){
       Serial.println("Fin procedure de demarrage");
     }
     if(cmd == "fdih"){
-      delay(100);
+      delay(10);
       timegeth = millis();
       sendMessage(1, "geth", sender);
     }    
     if(cmd == "difh"){
       if (!findValue(getValue(msg, ':', 1))) {
-        delay(340);
+        delay(40);
         rtc.setTime(((getValue(msg, ':', 2)).toInt())+1);
         Serial.println(getValue(msg, ':', 2));
         addValue(getValue(msg, ':', 1));
-        delay(300*localAddress);
+        delay(20*localAddress);
         String tosendtimestamp = "difh:";
         tosendtimestamp += getValue(msg, ':', 1);
         tosendtimestamp += ":";
