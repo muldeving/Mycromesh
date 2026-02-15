@@ -2188,19 +2188,19 @@ void loop() {
    }
   if (lora.available()) { onReceive(); }
       
-  if(pingphase == 1 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
+  if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 2;
     Serial.println("ping phase 2");
     tmps = (millis()/1000);
   }
-  if(pingphase == 2 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
+  if(pingphase == 2 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 3;
     Serial.println("ping phase 3");
     tmps = (millis()/1000);
   }
-  if(pingphase == 3 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
+  if(pingphase == 3 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
     pingphase = 0;
     String outgoingumap = exportEdgesContainingVertex(localAddress);
     Serial.println(outgoingumap);
@@ -2403,7 +2403,7 @@ void onReceive() {
       rping += String(sender);
       rping += ":rpin:";
       rping += String(lora.packetRssi());
-      scheduleCommand((20*localAddress), rping);                         // skip rest of function
+      scheduleCommand((50*localAddress), rping);                         // skip rest of function
     }        
     if(getValue(incoming, ':', 0) == "difh"){
       if (!findValue(getValue(incoming, ':', 1))) {
