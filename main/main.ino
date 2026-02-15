@@ -2188,19 +2188,19 @@ void loop() {
    }
   if (lora.available()) { onReceive(); }
       
-  if(pingphase == 1 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 1 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 2;
     Serial.println("ping phase 2");
     tmps = (millis()/1000);
   }
-  if(pingphase == 2 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 2 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 3;
     Serial.println("ping phase 3");
     tmps = (millis()/1000);
   }
-  if(pingphase == 3 && ((millis()/1000) - tmps >= 18 || (millis()/1000) < tmps)){         
+  if(pingphase == 3 && ((millis()/1000) - tmps >= 2 || (millis()/1000) < tmps)){         
     pingphase = 0;
     String outgoingumap = exportEdgesContainingVertex(localAddress);
     Serial.println(outgoingumap);
@@ -2214,12 +2214,12 @@ void loop() {
     startprocedure();
   }
 
-  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 5) || ltgdel > (millis()/1000))){
+  if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
     exportcache();
   }
 
-  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 4) || ltgdelfile > (millis()/1000))){
+  if(infilecache == true && isfdeson == true && togateCountFile == 0 && ((millis()/1000) > (ltgdelfile + 2) || ltgdelfile > (millis()/1000))){
     ltgdelfile = (millis()/1000);
     filetxdelai = (millis()/1000);
     exportfile();
