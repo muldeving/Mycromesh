@@ -27,8 +27,9 @@ const String FIRMWARE_VERSION = "1.3.0";
 #define uS_TO_S_FACTOR 1000000
 
 #define PACKET_SIZE 150
-#define GROUP_K 8
-#define PARITY_M 8
+#define GROUP_K 32
+#define PARITY_M 6
+#define CHUNK_SIZE 75  // 150/75=2 chunks exacts par paquet, laisse place au CRC16
 
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
@@ -575,13 +576,17 @@ uint8_t gfInv(uint8_t a) {
   return gf_exp[(255 - gf_log_tbl[a]) % 255];
 }
 
-uint32_t crc32_buf(const uint8_t *buf, size_t len) {
-  uint32_t crc = 0xFFFFFFFF;
+// CRC16/CCITT-FALSE — polynôme 0x1021, init 0xFFFF
+uint16_t crc16(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; i++) {
-    crc ^= buf[i];
-    for (int j = 0; j < 8; j++) crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    crc ^= ((uint16_t)data[i] << 8);
+    for (int j = 0; j < 8; j++) {
+      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else crc <<= 1;
+    }
   }
-  return ~crc;
+  return crc;
 }
 
 uint32_t crc32_file(File &f) {
@@ -596,42 +601,6 @@ uint32_t crc32_file(File &f) {
     }
   }
   return ~crc;
-}
-
-String bytesToHex(const uint8_t *data, int len) {
-  String s;
-  s.reserve(len*2);
-  char tmp[3]; tmp[2] = 0;
-  for (int i = 0; i < len; i++) {
-    sprintf(tmp, "%02X", data[i]);
-    s += tmp;
-  }
-  return s;
-}
-
-bool hexToBytes(const String &hex, uint8_t *out, int outLen) {
-  if ((int)hex.length() != outLen*2) return false;
-  char str[3]; str[2]=0;
-  for (int i = 0; i < outLen; i++) {
-    str[0] = hex.charAt(i*2);
-    str[1] = hex.charAt(i*2+1);
-    long v = strtol(str, NULL, 16);
-    if (v < 0 || v > 255) return false;
-    out[i] = (uint8_t)v;
-  }
-  return true;
-}
-
-// NEW: wrap hex output so each line <=150 chars
-void writeWrappedHex(File &f, const String &prefix, const String &hex, int maxLen = 150) {
-  int total = hex.length();
-  int pos = 0;
-  while (pos < total) {
-    int chunk = min(maxLen, total - pos);
-    f.print(prefix);
-    f.println(hex.substring(pos, pos + chunk));
-    pos += chunk;
-  }
 }
 
 void encodeGroupParity(uint8_t **dataBuf, uint8_t **parityBuf) {
@@ -701,49 +670,87 @@ bool parseFile(String path) {
   uint32_t fcrc = crc32_file(inF);
   inF.seek(0);
 
+  Serial.printf("Source: %u bytes, CRC=%08X\n", fileSize, fcrc);
+
   uint32_t totalDataPackets = (fileSize + PACKET_SIZE - 1) / PACKET_SIZE;
   uint32_t parityGroups = (totalDataPackets + GROUP_K - 1) / GROUP_K;
+
+  Serial.printf("Config: %u packets, %u groupes\n", totalDataPackets, parityGroups);
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
   if (!tx) { inF.close(); Serial.println("ERREUR création tx.txt"); return false; }
 
-  tx.printf("META:%u:%08X:%u:%u:%u:%u\n", (unsigned)totalDataPackets, (unsigned)fcrc, (unsigned)fileSize, (unsigned)parityGroups, (unsigned)GROUP_K, (unsigned)PARITY_M);
+  tx.printf("META:%u:%08X:%u:%u\n", totalDataPackets, fcrc, fileSize, parityGroups);
+  tx.flush();
 
   uint8_t *dataBuf[GROUP_K];
   for (int i=0;i<GROUP_K;i++) dataBuf[i] = (uint8_t*)calloc(PACKET_SIZE,1);
   uint8_t *parityBuf[PARITY_M];
   for (int p=0;p<PARITY_M;p++) parityBuf[p] = (uint8_t*)calloc(PACKET_SIZE,1);
 
+  char hexBuf[5]; hexBuf[4] = 0;
+  uint8_t chunkData[CHUNK_SIZE];
+
   for (uint32_t g = 0; g < parityGroups; g++) {
     for (int i=0;i<GROUP_K;i++) {
       memset(dataBuf[i],0,PACKET_SIZE);
-      int r = inF.read(dataBuf[i], PACKET_SIZE);
-      (void)r;
       uint32_t pid = g*GROUP_K + i;
-      if (pid >= totalDataPackets) break;
-      uint32_t dcrc = crc32_buf(dataBuf[i], PACKET_SIZE);
-      tx.printf("DATA:%04X:%08X:""\n", (unsigned)pid, (unsigned)dcrc);
-      String h = bytesToHex(dataBuf[i], PACKET_SIZE);
-      writeWrappedHex(tx, "DATA_CONT:", h);
+      if (pid < totalDataPackets) {
+        inF.read(dataBuf[i], PACKET_SIZE);
+      }
+
+      int bytesWritten = 0;
+      while (bytesWritten < PACKET_SIZE) {
+        int toWrite = min(CHUNK_SIZE, PACKET_SIZE - bytesWritten);
+        memcpy(chunkData, dataBuf[i] + bytesWritten, toWrite);
+        uint16_t lineCRC = crc16(chunkData, toWrite);
+        tx.printf("D%02X%02X%02X", (unsigned)(g & 0xFF), i, (bytesWritten & 0xFF));
+        for (int b=0; b<toWrite; b++) {
+          sprintf(hexBuf, "%02X", chunkData[b]);
+          tx.print(hexBuf);
+        }
+        sprintf(hexBuf, "%04X", lineCRC);
+        tx.print(hexBuf);
+        tx.println();
+        bytesWritten += toWrite;
+      }
     }
 
     encodeGroupParity(dataBuf, parityBuf);
     for (int p=0;p<PARITY_M;p++) {
-      uint32_t pcrc = crc32_buf(parityBuf[p], PACKET_SIZE);
-      tx.printf("PARITY:%04X:%02X:%08X:""\n", (unsigned)g, (unsigned)p, (unsigned)pcrc);
-      String h = bytesToHex(parityBuf[p], PACKET_SIZE);
-      writeWrappedHex(tx, "PARITY_CONT:", h);
+      int bytesWritten = 0;
+      while (bytesWritten < PACKET_SIZE) {
+        int toWrite = min(CHUNK_SIZE, PACKET_SIZE - bytesWritten);
+        memcpy(chunkData, parityBuf[p] + bytesWritten, toWrite);
+        uint16_t lineCRC = crc16(chunkData, toWrite);
+        tx.printf("P%02X%02X%02X", (unsigned)(g & 0xFF), p, (bytesWritten & 0xFF));
+        for (int b=0; b<toWrite; b++) {
+          sprintf(hexBuf, "%02X", chunkData[b]);
+          tx.print(hexBuf);
+        }
+        sprintf(hexBuf, "%04X", lineCRC);
+        tx.print(hexBuf);
+        tx.println();
+        bytesWritten += toWrite;
+      }
+    }
+
+    if ((g+1) % 20 == 0) {
+      tx.flush();
+      Serial.printf("Encodage: %u/%u groupes\n", g+1, parityGroups);
     }
   }
 
   for (int i=0;i<GROUP_K;i++) free(dataBuf[i]);
   for (int p=0;p<PARITY_M;p++) free(parityBuf[p]);
 
-  tx.close(); inF.close();
-  
+  tx.flush();
+  tx.close();
+  inF.close();
+
   if (SD.exists("/large.cmd") && path == "/large.cmd") SD.remove("/large.cmd");
-  
+
   sdToLora();
   Serial.println("PARSE terminé.");
   return true;
@@ -760,160 +767,220 @@ void compileFile(String fnameced, int origin, int toremof) {
   if (!rx) { Serial.println("ERREUR ouverture rx.txt"); return; }
 
   String meta = rx.readStringUntil('\n'); meta.trim();
-  if (!meta.startsWith("META:")) { rx.close(); Serial.println("ERREUR META manquantes"); return; }
+  if (!meta.startsWith("META:")) { rx.close(); Serial.println("ERREUR META"); return; }
 
-  unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0, metaK=0, metaM=0;
+  unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0;
+  int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
+  if (scanned<4) { Serial.println("ERREUR parse meta"); rx.close(); return; }
 
-  int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups, &metaK, &metaM);
-  if (scanned<6) { Serial.println("ERREUR meta"); rx.close(); return; }
+  Serial.printf("Attendu: %u packets, %u bytes, CRC=%08X\n", totalDataPackets, expectedSize, fileCRC);
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
-  if (!out) { rx.close(); Serial.println("ERREUR out.txt"); return; }
+  if (!out) { rx.close(); Serial.println("ERREUR out"); return; }
 
   uint32_t bytesWritten=0;
 
+  uint8_t *dataBuf[GROUP_K];
+  bool hasData[GROUP_K];
+  uint8_t *parityBuf[PARITY_M];
+  bool hasParity[PARITY_M];
+  uint8_t dataBitmap[GROUP_K][4];
+  uint8_t parityBitmap[PARITY_M][4];
+
+  for (int i=0; i<GROUP_K; i++) dataBuf[i] = (uint8_t*)calloc(PACKET_SIZE, 1);
+  for (int p=0; p<PARITY_M; p++) parityBuf[p] = (uint8_t*)calloc(PACKET_SIZE, 1);
+
+  uint8_t chunkData[CHUNK_SIZE];
+  int crcRejects = 0;
+
   for (unsigned int g=0; g<parityGroups; g++) {
+    for (int i=0; i<GROUP_K; i++) {
+      memset(dataBuf[i], 0, PACKET_SIZE);
+      hasData[i] = false;
+      memset(dataBitmap[i], 0, 4);
+    }
+    for (int p=0; p<PARITY_M; p++) {
+      memset(parityBuf[p], 0, PACKET_SIZE);
+      hasParity[p] = false;
+      memset(parityBitmap[p], 0, 4);
+    }
 
-    uint8_t *dataBuf[GROUP_K]; bool hasData[GROUP_K];
-    for (int i=0;i<GROUP_K;i++) { dataBuf[i]=(uint8_t*)calloc(PACKET_SIZE,1); hasData[i]=false; }
-
-    uint8_t *parityBuf[PARITY_M]; bool hasParity[PARITY_M];
-    for (int p=0;p<PARITY_M;p++) { parityBuf[p]=(uint8_t*)calloc(PACKET_SIZE,1); hasParity[p]=false; }
-
-    rx.seek(0); rx.readStringUntil('\n');
+    rx.seek(0);
+    rx.readStringUntil('\n');
 
     while (rx.available()) {
-      String line = rx.readStringUntil('\n'); line.trim();
-      if (line.length()==0) continue;
+      String line = rx.readStringUntil('\n');
+      line.trim();
+      if (line.length() < 9) continue;  // 7 header + 2 CRC minimum
 
-      if (line.startsWith("DATA:")) {
-        unsigned int pid, dcrc; int hdrEnd=0;
-        if (sscanf(line.c_str(), "DATA:%X:%X:%n", &pid, &dcrc, &hdrEnd)>=2) {
-          unsigned int base = g*GROUP_K;
-          if (pid>=base && pid<base+GROUP_K) {
-            int idx = pid - base;
-            String hex="";
+      if (line[0] == 'D' || line[0] == 'P') {
+        char type = line[0];
+        char gidStr[3] = {line[1], line[2], 0};
+        char idxStr[3] = {line[3], line[4], 0};
+        char offsetStr[3] = {line[5], line[6], 0};
 
-            while (true) {
-              long posSave=rx.position();
-              String cont=rx.readStringUntil('\n'); cont.trim();
-              if (!cont.startsWith("DATA_CONT:")) { rx.seek(posSave); break; }
-              hex += cont.substring(cont.indexOf(':')+1);
-            }
+        if (!isxdigit(gidStr[0]) || !isxdigit(gidStr[1]) ||
+            !isxdigit(idxStr[0]) || !isxdigit(idxStr[1]) ||
+            !isxdigit(offsetStr[0]) || !isxdigit(offsetStr[1])) {
+          continue;
+        }
 
-            if (hex.length()==PACKET_SIZE*2 && hexToBytes(hex,dataBuf[idx],PACKET_SIZE)) {
-              if (crc32_buf(dataBuf[idx], PACKET_SIZE)==dcrc) hasData[idx]=true;
+        unsigned int gid = strtol(gidStr, NULL, 16);
+        unsigned int idx = strtol(idxStr, NULL, 16);
+        unsigned int offset = strtol(offsetStr, NULL, 16);
+
+        if (gid != g) continue;
+
+        uint8_t *targetBuf = NULL;
+        uint8_t *targetBitmap = NULL;
+        bool *targetFlag = NULL;
+
+        if (type == 'D' && idx < GROUP_K) {
+          targetBuf = dataBuf[idx];
+          targetBitmap = dataBitmap[idx];
+          targetFlag = &hasData[idx];
+        }
+        else if (type == 'P' && idx < PARITY_M) {
+          targetBuf = parityBuf[idx];
+          targetBitmap = parityBitmap[idx];
+          targetFlag = &hasParity[idx];
+        }
+
+        if (targetBuf && targetBitmap) {
+          int dataLen = line.length() - 7 - 4;  // minus header and CRC16
+          if (dataLen < 0 || dataLen % 2 != 0) continue;
+
+          int numBytes = dataLen / 2;
+          if (numBytes > CHUNK_SIZE) numBytes = CHUNK_SIZE;
+
+          bool parseOK = true;
+          for (int b = 0; b < numBytes; b++) {
+            int pos = 7 + b * 2;
+            char c1 = line[pos];
+            char c2 = line[pos+1];
+            if (isxdigit(c1) && isxdigit(c2)) {
+              char byteStr[3] = {c1, c2, 0};
+              chunkData[b] = (uint8_t)strtol(byteStr, NULL, 16);
+            } else {
+              parseOK = false;
+              break;
             }
           }
-        }
-      }
-      else if (line.startsWith("PARITY:")) {
-        unsigned int gid, copy, pcrc; int hdrEnd=0;
-        if (sscanf(line.c_str(), "PARITY:%X:%X:%X:%n", &gid, &copy, &pcrc, &hdrEnd)>=3) {
-          if (gid==g && copy<PARITY_M) {
-            String hex="";
-            while (true) {
-              long posSave=rx.position();
-              String cont=rx.readStringUntil('\n'); cont.trim();
-              if (!cont.startsWith("PARITY_CONT:")) { rx.seek(posSave); break; }
-              hex += cont.substring(cont.indexOf(':')+1);
-            }
 
-            if (hex.length()==PACKET_SIZE*2 && hexToBytes(hex,parityBuf[copy],PACKET_SIZE)) {
-              if (crc32_buf(parityBuf[copy], PACKET_SIZE)==pcrc) hasParity[copy]=true;
-            }
+          if (!parseOK) continue;
+
+          char crcStr[5] = {line[line.length()-4], line[line.length()-3],
+                            line[line.length()-2], line[line.length()-1], 0};
+          if (!isxdigit(crcStr[0]) || !isxdigit(crcStr[1]) ||
+              !isxdigit(crcStr[2]) || !isxdigit(crcStr[3])) continue;
+          uint16_t receivedCRC = (uint16_t)strtol(crcStr, NULL, 16);
+
+          uint16_t calculatedCRC = crc16(chunkData, numBytes);
+          if (calculatedCRC != receivedCRC) {
+            crcRejects++;
+            continue;
           }
+
+          int bufPos = offset;
+          for (int b = 0; b < numBytes && bufPos < PACKET_SIZE; b++) {
+            targetBuf[bufPos++] = chunkData[b];
+          }
+
+          int chunkIdx = offset / CHUNK_SIZE;
+          if (chunkIdx < 4) {
+            targetBitmap[chunkIdx] = 1;
+          }
+
+          int numChunks = (PACKET_SIZE + CHUNK_SIZE - 1) / CHUNK_SIZE;
+          bool complete = true;
+          for (int c = 0; c < numChunks; c++) {
+            if (targetBitmap[c] == 0) { complete = false; break; }
+          }
+          if (complete) *targetFlag = true;
         }
       }
+    }
+
+    for (int i=0; i<GROUP_K; i++) {
+      unsigned int pid=g*GROUP_K+i;
+      if (pid>=totalDataPackets) hasData[i]=true;
     }
 
     int missingCount=0, missingIdx[GROUP_K];
     for (int i=0;i<GROUP_K;i++) {
-      unsigned int globalId=g*GROUP_K+i;
-      if (globalId>=totalDataPackets) { hasData[i]=true; memset(dataBuf[i],0,PACKET_SIZE); }
-      else if (!hasData[i]) missingIdx[missingCount++]=i;
+      unsigned int pid=g*GROUP_K+i;
+      if (pid<totalDataPackets && !hasData[i]) missingIdx[missingCount++]=i;
     }
 
-    if (missingCount==0) {
-      for (int i=0;i<GROUP_K;i++) {
-        unsigned int globalId=g*GROUP_K+i;
-        if (globalId>=totalDataPackets) break;
-        uint32_t remain = (expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
-        size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
-        if (toWrite>0) { out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
-      }
-      for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
-      for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
-      continue;
-    }
+    if (missingCount>0 && missingCount<=PARITY_M) {
+      int availP=0, parityIdxs[PARITY_M];
+      for (int p=0;p<PARITY_M;p++) if (hasParity[p]) parityIdxs[availP++]=p;
 
-    if (missingCount>PARITY_M) {
-      for (int i=0;i<GROUP_K;i++) {
-        unsigned int globalId=g*GROUP_K+i;
-        if (globalId>=totalDataPackets) break;
-        uint32_t remain=(expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
-        size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
-        if (toWrite>0){ out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
-      }
-      for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
-      for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
-      continue;
-    }
+      if (availP>=missingCount) {
+        int n=missingCount;
+        uint8_t *mat=(uint8_t*)malloc(n*n);
+        uint8_t *inv=(uint8_t*)malloc(n*n);
 
-    int availP=0, parityIdxs[PARITY_M];
-    for (int p=0;p<PARITY_M;p++) if (hasParity[p]) parityIdxs[availP++]=p;
+        if (mat && inv) {
+          memset(mat,0,n*n);
+          for(int r=0;r<n;r++) {
+            uint8_t alpha = (uint8_t)(parityIdxs[r]+1);
+            for(int c=0;c<n;c++) mat[r*n+c] = gfPow(alpha, missingIdx[c]);
+          }
 
-    int n=missingCount;
-    uint8_t *mat=(uint8_t*)malloc(n*n);
-    uint8_t *inv=(uint8_t*)malloc(n*n);
-    memset(mat,0,n*n); memset(inv,0,n*n);
-
-    for(int r=0;r<n;r++){
-      uint8_t alpha=(uint8_t)(parityIdxs[r]+1);
-      for(int c=0;c<n;c++) mat[r*n+c]=gfPow(alpha, missingIdx[c]);
-    }
-
-    invertMatrixGF(mat,inv,n);
-
-    uint8_t *rhs=(uint8_t*)malloc(n);
-    uint8_t *sol=(uint8_t*)malloc(n);
-
-    for(int b=0;b<PACKET_SIZE;b++){
-      for(int r=0;r<n;r++){
-        uint8_t val=parityBuf[parityIdxs[r]][b];
-        for(int i=0;i<GROUP_K;i++){
-          bool isMissing=false;
-          for(int mm=0;mm<n;mm++) if(missingIdx[mm]==i){isMissing=true;break;}
-          if(!isMissing){ val ^= gfMul(dataBuf[i][b], gfPow((uint8_t)(parityIdxs[r]+1),i)); }
+          if (invertMatrixGF(mat,inv,n)) {
+            uint8_t rhs[PARITY_M], sol[PARITY_M];
+            for(int b=0;b<PACKET_SIZE;b++){
+              for(int r=0;r<n;r++){
+                uint8_t val=parityBuf[parityIdxs[r]][b];
+                for(int i=0;i<GROUP_K;i++){
+                  if (hasData[i]) {
+                    uint8_t alpha = (uint8_t)(parityIdxs[r]+1);
+                    val ^= gfMul(dataBuf[i][b], gfPow(alpha, i));
+                  }
+                }
+                rhs[r]=val;
+              }
+              for(int r=0;r<n;r++){
+                uint8_t acc=0;
+                for(int c=0;c<n;c++) acc^=gfMul(inv[r*n+c],rhs[c]);
+                sol[r]=acc;
+              }
+              for(int m=0;m<n;m++) dataBuf[missingIdx[m]][b]=sol[m];
+            }
+            for(int m=0;m<n;m++) hasData[missingIdx[m]] = true;
+          }
+          free(mat); free(inv);
         }
-        rhs[r]=val;
       }
-      for(int row=0;row<n;row++){
-        uint8_t acc=0;
-        for(int c=0;c<n;c++) acc ^= gfMul(inv[row*n+c], rhs[c]);
-        sol[row]=acc;
-      }
-      for(int mm=0;mm<n;mm++) dataBuf[missingIdx[mm]][b]=sol[mm];
     }
 
-    free(rhs); free(sol); free(mat); free(inv);
-
-    for(int i=0;i<GROUP_K;i++){
-      unsigned int globalId=g*GROUP_K+i;
-      if (globalId>=totalDataPackets) break;
+    for (int i=0;i<GROUP_K;i++) {
+      unsigned int pid=g*GROUP_K+i;
+      if (pid>=totalDataPackets) break;
       uint32_t remain=(expectedSize>bytesWritten)?(expectedSize-bytesWritten):0;
       size_t toWrite=(remain>=PACKET_SIZE)?PACKET_SIZE:remain;
-      if(toWrite>0){ out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
+      if (toWrite>0){ out.write(dataBuf[i],toWrite); bytesWritten+=toWrite; }
     }
 
-    for(int i=0;i<GROUP_K;i++) free(dataBuf[i]);
-    for(int p=0;p<PARITY_M;p++) free(parityBuf[p]);
+    if ((g+1) % 10 == 0) {
+      out.flush();
+      Serial.printf("Décodage: %u/%u groupes\n", g+1, parityGroups);
+    }
   }
 
-  out.close(); rx.close();
+  for (int i=0; i<GROUP_K; i++) free(dataBuf[i]);
+  for (int p=0; p<PARITY_M; p++) free(parityBuf[p]);
+
+  out.flush();
+  out.close();
+  rx.close();
+
+  Serial.printf("Lignes rejetées (CRC16): %d\n", crcRejects);
 
   File outf = SD.open(fnameced, FILE_READ);
+  if (!outf) { Serial.println("ERREUR: fichier de sortie introuvable"); sdToLora(); return; }
   uint32_t finalCRC=crc32_file(outf);
   uint32_t finalSize=outf.size();
   SD.remove("/rx.txt");
@@ -927,7 +994,6 @@ void compileFile(String fnameced, int origin, int toremof) {
     }
     if (SD.exists("/large.cmd")) SD.remove("/large.cmd");
   }
-  
   outf.close();
   sdToLora();
 
