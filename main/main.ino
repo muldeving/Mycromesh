@@ -3175,7 +3175,7 @@ void interpreter(String msg){
         tempfntc += ":";
         tempfntc += getValue(msg, ':', 3);
         filesender = -1;
-        scheduleCommand(800, tempfntc);
+        scheduleCommand(2000, tempfntc);
       }
     }
     if(cmd == "compileFile"){
