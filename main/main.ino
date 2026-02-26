@@ -26,10 +26,10 @@ const String FIRMWARE_VERSION = "1.3.0";
 
 #define uS_TO_S_FACTOR 1000000
 
-#define PACKET_SIZE 150
+#define PACKET_SIZE 180
 #define GROUP_K 32
 #define PARITY_M 6
-#define CHUNK_SIZE 75  // 150/75=2 chunks exacts par paquet, laisse place au CRC16
+#define CHUNK_SIZE 90  // 180/90=2 chunks exacts par paquet, laisse place au CRC16
 
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
