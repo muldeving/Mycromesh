@@ -1371,6 +1371,54 @@ int findNearestVertex(int src) {
   return nearestVertex;
 }
 
+// Retourne un délai en millisecondes basé sur le rang de la station locale
+// parmi l'ensemble {localAddress} ∪ {voisins directs}, trié par adresse.
+// Paramètre : delayPerRank — durée en ms à multiplier par le rang.
+unsigned long getBroadcastDelay(unsigned long delayPerRank) {
+  // 1. Collecter les adresses des voisins directs
+  int group[MAX_VERTICES + 1];
+  int groupSize = 0;
+  group[groupSize++] = localAddress;
+
+  for (int i = 0; i < numEdges; i++) {
+    if (edges[i].vertex1 == localAddress) {
+      group[groupSize++] = edges[i].vertex2;
+    } else if (edges[i].vertex2 == localAddress) {
+      group[groupSize++] = edges[i].vertex1;
+    }
+    if (groupSize >= MAX_VERTICES + 1) break;
+  }
+
+  // 2. Trier le groupe par adresse croissante (tri à bulles)
+  for (int i = 0; i < groupSize - 1; i++) {
+    for (int j = 0; j < groupSize - i - 1; j++) {
+      if (group[j] > group[j + 1]) {
+        int tmp = group[j];
+        group[j] = group[j + 1];
+        group[j + 1] = tmp;
+      }
+    }
+  }
+
+  // 3. Trouver le rang de la station locale dans la liste triée
+  int rank = 0;
+  for (int i = 0; i < groupSize; i++) {
+    if (group[i] == localAddress) {
+      rank = i;
+      break;
+    }
+  }
+
+  unsigned long delay_ms = (unsigned long)rank * delayPerRank;
+  Serial.print("[getBroadcastDelay] rang=");
+  Serial.print(rank);
+  Serial.print(" delai=");
+  Serial.print(delay_ms);
+  Serial.println("ms");
+
+  return delay_ms;
+}
+
 void addValue(String newValue) {
   if (dataCount < MAX_SIZE) {
     dataArray[dataCount].value = newValue;
