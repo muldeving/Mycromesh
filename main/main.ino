@@ -26,6 +26,10 @@ const String FIRMWARE_VERSION = "1.3.0";
 
 #define uS_TO_S_FACTOR 1000000
 
+// Durée minimale d'un slot de diffusion (ms).
+// Doit être >= 2x le temps de transmission maximum d'un paquet LoRa.
+#define BROADCAST_DELAY_SLOT_MS 200
+
 #define PACKET_SIZE 180
 #define GROUP_K 32
 #define PARITY_M 6
@@ -117,6 +121,7 @@ unsigned long lastair;
 struct DelayedCommand {
   unsigned long triggerTime;
   String command;
+  String broadcastId; // ID du broadcast à supprimer si doublon reçu ; vide sinon
   bool active;
 };
 DelayedCommand commandQueue[MAX_COMMANDS];
@@ -2404,6 +2409,40 @@ void scheduleCommand(unsigned long delayMs, const String& command) {
   Serial.println("Erreur : file de commandes pleine.");
 }
 
+// Planifie un re-broadcast identifiable par son ID.
+// Utiliser cancelBroadcastById() pour l'annuler si un doublon est reçu.
+void scheduleBroadcast(unsigned long delayMs, const String& command, const String& broadcastId) {
+  unsigned long triggerTime = millis() + delayMs;
+  for (int i = 0; i < MAX_COMMANDS; i++) {
+    if (!commandQueue[i].active) {
+      commandQueue[i].triggerTime = triggerTime;
+      commandQueue[i].command = command;
+      commandQueue[i].broadcastId = broadcastId;
+      commandQueue[i].active = true;
+      Serial.print("[scheduleBroadcast] id=");
+      Serial.print(broadcastId);
+      Serial.print(" delai=");
+      Serial.print(delayMs);
+      Serial.println("ms");
+      return;
+    }
+  }
+  Serial.println("Erreur : file de commandes pleine.");
+}
+
+// Annule le re-broadcast en attente pour l'ID donné.
+// Appelée quand un doublon est capté (un voisin de rang inférieur a déjà relayé).
+void cancelBroadcastById(const String& broadcastId) {
+  for (int i = 0; i < MAX_COMMANDS; i++) {
+    if (commandQueue[i].active && commandQueue[i].broadcastId == broadcastId) {
+      commandQueue[i].active = false;
+      Serial.print("[cancelBroadcast] supprimé id=");
+      Serial.println(broadcastId);
+      return;
+    }
+  }
+}
+
 void checkDelayedCommands() {
   unsigned long currentMillis = millis();
   String tmpcmdd;
@@ -2492,7 +2531,9 @@ void onReceive() {
   if (recipient == 0) {
 
     if (getValue(incoming, ':', 0) == "umap") {
-      if (!findValue(getValue(incoming, ':', 1))) {
+      String msgId = getValue(incoming, ':', 1);
+      if (!findValue(msgId)) {
+        // Première réception : mise à jour du graphe et planification du re-broadcast.
         int pcount = 3;
         removeEdgesByVertex(getValue(incoming, ':', 2).toInt());
         while (getValue(incoming, ':', pcount) != "") {
@@ -2503,12 +2544,18 @@ void onReceive() {
           );
           pcount++;
         }
-        addValue(getValue(incoming, ':', 1));
-        String rumap = "trsm:";
-        rumap += "0:";
+        addValue(msgId);
+        String rumap = "trsm:0:";
         rumap += incoming;
-        scheduleCommand((20*localAddress), rumap);
-    }
+        // Délai basé sur le rang parmi les voisins directs triés par adresse.
+        // Si un voisin de rang inférieur émet en premier, cancelBroadcastById()
+        // annulera ce slot dès réception du doublon.
+        scheduleBroadcast(getBroadcastDelay(BROADCAST_DELAY_SLOT_MS), rumap, msgId);
+      } else {
+        // Doublon reçu : un voisin de rang inférieur a déjà relayé ce broadcast.
+        // On annule notre propre re-broadcast pour éviter toute collision.
+        cancelBroadcastById(msgId);
+      }
   }
     
     if(getValue(incoming, ':', 0) == "ping"){    
