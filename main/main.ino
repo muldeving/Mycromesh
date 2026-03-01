@@ -1032,6 +1032,12 @@ void compileFile(String fnameced, int origin, int toremof) {
       Serial.println(tempfeok);
       interpreter(tempfeok);
     }
+    // Diffusion de la réussite de compilation vers tout le réseau dans 5 minutes
+    if (fnameced != "/large.cmd") {
+      String bcokCmd = "bcok:";
+      bcokCmd += fnameced;
+      scheduleCommand(300000, bcokCmd);  // 5 min = 300 000 ms
+    }
     if(fnameced == "/large.cmd"){
       Serial.println(tointlarge);
       scheduleCommand(500, tointlarge);
@@ -2599,6 +2605,22 @@ void onReceive() {
       }
    }
 
+    // --- Diffusion réussite de compilation : bcok:ID:STATION:CHEMIN ---
+    if (getValue(incoming, ':', 0) == "bcok") {
+      String bcokid = getValue(incoming, ':', 1);
+      if (!findValue(bcokid)) {
+        addValue(bcokid);
+        Serial.print("[BCOK] Station ");
+        Serial.print(getValue(incoming, ':', 2));
+        Serial.print(" a reussi la compilation de : ");
+        Serial.println(getValue(incoming, ':', 3));
+        // Rétransmission sans réveil avec délai proportionnel au rang
+        String rbcok = "trsms:0:";
+        rbcok += incoming;
+        scheduleCommand(20 * localAddress, rbcok);
+      }
+    }
+
     // --- Commande de verrouillage diffusion : brdl:ID:chemin ---
     if (getValue(incoming, ':', 0) == "brdl") {
       if (!findValue(getValue(incoming, ':', 1))) {
@@ -3379,6 +3401,22 @@ void interpreter(String msg){
       else{
         Serial.println(" non crée.");
       }
+    }
+
+    // Diffusion de la réussite de compilation (schedulé 5 min après compileFile OK)
+    // Format diffusé : bcok:ID:STATION:CHEMIN
+    if (cmd == "bcok") {
+      String tempid = generateid();
+      String bcok = "bcok:";
+      bcok += tempid;
+      bcok += ":";
+      bcok += localAddress;
+      bcok += ":";
+      bcok += getValue(msg, ':', 1);  // chemin du fichier compilé
+      addValue(tempid);  // Éviter de retraiter notre propre bcok si reçu en écho
+      sendMessage(0, bcok, 0);  // Diffusion sans réveil
+      Serial.print("[BCOK] Diffusion réussite compilation : ");
+      Serial.println(getValue(msg, ':', 1));
     }
 
     // ================================================================
