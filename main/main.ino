@@ -1032,8 +1032,8 @@ void compileFile(String fnameced, int origin, int toremof) {
       Serial.println(tempfeok);
       interpreter(tempfeok);
     }
-    // Diffusion de la réussite de compilation vers tout le réseau dans 5 minutes
-    if (fnameced != "/large.cmd") {
+    // Diffusion de la réussite de compilation uniquement pour les fichiers reçus via diff
+    if (origin == -1) {
       String bcokCmd = "bcok:";
       bcokCmd += fnameced;
       scheduleCommand(300000, bcokCmd);  // 5 min = 300 000 ms
