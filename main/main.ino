@@ -112,6 +112,16 @@ int nbtogatefailfile = 0;
 int togateCountFile = 0;
 unsigned long lastair;
 
+// Variables diffusion réseau (broadcast fichier)
+bool broadcastMode = false;         // Station en mode réception diffusion
+bool broadcastEmitter = false;      // Cette station est l'émettrice
+String broadcastPath = "";          // Chemin du fichier en cours de diffusion
+unsigned long lastBroadcastRecv = 0;// Horodatage dernière activité (secondes)
+int lastBrdfSeq = -1;              // Dernier numéro de séquence brdf traité
+bool broadcastFileSending = false;  // Émettrice : envoi de lignes en cours
+unsigned long lastBrdfSendMs = 0;  // Dernier envoi brdf (millis)
+int brdfSeqCounter = 0;            // Compteur de séquence brdf
+
 // Tableaux
 
 struct DelayedCommand {
@@ -1010,16 +1020,24 @@ void compileFile(String fnameced, int origin, int toremof) {
     else{
       Serial.println(" ne sera pas supprimer");
     }
-    String tempfeok = "send:";
-    tempfeok += origin;
-    tempfeok += ":feok:";
-    tempfeok += localAddress;
-    tempfeok += ":";
-    tempfeok += fnameced;
-    tempfeok += ":";
-    tempfeok += toremof;
-    Serial.println(tempfeok);
-    interpreter(tempfeok);
+    if(origin >= 0){
+      String tempfeok = "send:";
+      tempfeok += origin;
+      tempfeok += ":feok:";
+      tempfeok += localAddress;
+      tempfeok += ":";
+      tempfeok += fnameced;
+      tempfeok += ":";
+      tempfeok += toremof;
+      Serial.println(tempfeok);
+      interpreter(tempfeok);
+    }
+    // Diffusion de la réussite de compilation uniquement pour les fichiers reçus via diff
+    if (origin == -1) {
+      String bcokCmd = "bcok:";
+      bcokCmd += fnameced;
+      scheduleCommand(300000, bcokCmd);  // 5 min = 300 000 ms
+    }
     if(fnameced == "/large.cmd"){
       Serial.println(tointlarge);
       scheduleCommand(500, tointlarge);
@@ -1950,6 +1968,88 @@ bool exportcache() {
  
 }
 
+// ---------------- BROADCAST EXPORT LINE ----------------
+// Lit une ligne de tx.txt et la diffuse en brdf:SEQ:LINE vers le réseau (dest=0)
+// Appelée périodiquement depuis loop() tant que broadcastEmitter && broadcastFileSending
+void broadcastExportLine() {
+  delay(50);
+  loraToSD();
+
+  File fichier = SD.open("/tx.txt", FILE_READ);
+  if (!fichier) {
+    Serial.println("[DIFF] tx.txt introuvable, arrêt diffusion");
+    sdToLora();
+    broadcastFileSending = false;
+    broadcastMode = false;
+    broadcastEmitter = false;
+    return;
+  }
+
+  uint32_t offsetfile = prefs.getUInt("brdoffset", 0);
+
+  if (offsetfile >= fichier.size()) {
+    fichier.close();
+    SD.remove("/tx.txt");
+    prefs.remove("brdoffset");
+    sdToLora();
+    // Diffusion du signal de fin
+    String tempid = generateid();
+    String brde = "brde:";
+    brde += tempid;
+    brde += ":";
+    brde += broadcastPath;
+    addValue(tempid);  // Éviter de retraiter notre propre brde
+    sendMessage(0, brde, 0);  // Pas de réveil
+    broadcastFileSending = false;
+    broadcastMode = false;
+    broadcastEmitter = false;
+    lastBrdfSeq = -1;
+    Serial.println("[DIFF] Diffusion terminée, reprise fonctionnement normal");
+    return;
+  }
+
+  fichier.seek(offsetfile);
+
+  char ligne[TAILLE_TAMPON];
+  int index = 0;
+  bool ligneTrouvee = false;
+
+  while (fichier.available()) {
+    char c = fichier.read();
+    offsetfile++;
+    if (c == '\n' || index >= TAILLE_TAMPON - 1) {
+      ligne[index] = '\0';
+      ligneTrouvee = true;
+      break;
+    } else if (c != '\r') {
+      ligne[index++] = c;
+    }
+  }
+
+  fichier.close();
+
+  if (ligneTrouvee || index > 0) {
+    ligne[index] = '\0';
+    prefs.putUInt("brdoffset", offsetfile);
+    sdToLora();
+
+    String ligneStr = String(ligne);
+    if (ligneStr.length() > 0) {
+      String brdf = "brdf:";
+      brdf += String(brdfSeqCounter);
+      brdf += ":";
+      brdf += ligneStr;
+      lastBrdfSeq = brdfSeqCounter;  // Marquer comme déjà traité (ignore rétransmissions)
+      brdfSeqCounter++;
+      sendMessage(0, brdf, 0);  // Pas de réveil
+      Serial.print("[DIFF] Envoi seq=");
+      Serial.println(brdfSeqCounter - 1);
+    }
+  } else {
+    sdToLora();
+  }
+}
+
 bool exportfile() {
   delay(50);
   loraToSD();
@@ -2291,7 +2391,25 @@ void loop() {
     exportfile();
   }
 
-  if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
+  // --- Diffusion réseau : envoi périodique d'une ligne brdf (2s entre chaque ligne) ---
+  if (broadcastEmitter && broadcastFileSending) {
+    if (millis() >= lastBrdfSendMs + 2000 || millis() < lastBrdfSendMs) {
+      lastBrdfSendMs = millis();
+      broadcastExportLine();
+    }
+  }
+
+  // --- Timeout 5 minutes en mode réception diffusion (stations réceptrices) ---
+  if (broadcastMode && !broadcastEmitter) {
+    unsigned long nowSec = millis() / 1000;
+    if ((nowSec - lastBroadcastRecv) > 300 || (nowSec < lastBroadcastRecv)) {
+      broadcastMode = false;
+      lastBrdfSeq = -1;
+      Serial.println("[DIFF] Timeout 5min: reprise fonctionnement normal");
+    }
+  }
+
+  if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
       Serial.println("idle");
@@ -2483,10 +2601,76 @@ void onReceive() {
         tosendtimestamp += ":";
         tosendtimestamp += String(rtc.getLocalEpoch());
         Serial.println(tosendtimestamp);
-        sendMessage(1, tosendtimestamp, 0);        
+        sendMessage(1, tosendtimestamp, 0);
       }
    }
-    return;   
+
+    // --- Diffusion réussite de compilation : bcok:ID:STATION:CHEMIN ---
+    if (getValue(incoming, ':', 0) == "bcok") {
+      String bcokid = getValue(incoming, ':', 1);
+      if (!findValue(bcokid)) {
+        addValue(bcokid);
+        Serial.print("[BCOK] Station ");
+        Serial.print(getValue(incoming, ':', 2));
+        Serial.print(" a reussi la compilation de : ");
+        Serial.println(getValue(incoming, ':', 3));
+        // Rétransmission sans réveil avec délai proportionnel au rang
+        String rbcok = "trsms:0:";
+        rbcok += incoming;
+        scheduleCommand(20 * localAddress, rbcok);
+      }
+    }
+
+    // --- Commande de verrouillage diffusion : brdl:ID:chemin ---
+    if (getValue(incoming, ':', 0) == "brdl") {
+      if (!findValue(getValue(incoming, ':', 1))) {
+        addValue(getValue(incoming, ':', 1));
+        if (!broadcastMode) {
+          broadcastMode = true;
+          broadcastPath = getValue(incoming, ':', 2);
+          lastBroadcastRecv = millis() / 1000;
+          lastBrdfSeq = -1;
+          // Nettoyage rx.txt et préparation réception (via interpreter, hors ISR)
+          scheduleCommand(10, "brdinit");
+          Serial.println("[DIFF] Mode réception activé");
+        }
+        // Rétransmission avec délai proportionnel au rang
+        String rbrdl = "trsm:0:";
+        rbrdl += incoming;
+        scheduleCommand(20 * localAddress, rbrdl);
+      }
+    }
+
+    // --- Ligne de données diffusée : brdf:SEQ:LINEDATA ---
+    if (getValue(incoming, ':', 0) == "brdf") {
+      if (broadcastMode && !broadcastEmitter) {
+        int seq = getValue(incoming, ':', 1).toInt();
+        if (seq != lastBrdfSeq) {
+          lastBrdfSeq = seq;
+          lastBroadcastRecv = millis() / 1000;
+          // Traitement complet (écriture SD + rétransmission) via interpreter
+          scheduleCommand(5, incoming);
+        }
+      }
+    }
+
+    // --- Signal de fin de diffusion : brde:ID:chemin ---
+    if (getValue(incoming, ':', 0) == "brde") {
+      if (broadcastMode && !broadcastEmitter) {
+        String brdeid = getValue(incoming, ':', 1);
+        if (!findValue(brdeid)) {
+          addValue(brdeid);
+          // Rétransmission sans réveil
+          String rbrde = "trsms:0:";
+          rbrde += incoming;
+          scheduleCommand(20 * localAddress, rbrde);
+          // Compilation différée (laisser les rétransmissions se propager)
+          scheduleCommand(2100, incoming);
+        }
+      }
+    }
+
+    return;
   }
   scheduleCommand(15, incoming);
   lastair = millis();
@@ -2527,9 +2711,10 @@ bool checkCronField(const String& field, int currentValue, int moduloBase) {
 }
 
 void executeCronTasks() {
+  if (broadcastMode) return;  // Bloquer les cronjobs pendant la diffusion réseau
   time_t now = rtc.getEpoch();
   struct tm timeinfo = rtc.getTimeStruct();
-  if (timeinfo.tm_min == lastMinuteChecked) return; 
+  if (timeinfo.tm_min == lastMinuteChecked) return;
   lastMinuteChecked = timeinfo.tm_min;
   
   if (timeinfo.tm_sec != 0) return; 
@@ -3122,7 +3307,7 @@ void interpreter(String msg){
       importfile("/rx.txt", msg.substring(5, msg.length()));
     }
     if(cmd == "stft"){
-      if(filereceivientstation == -1 && filesender == -1){
+      if(filereceivientstation == -1 && filesender == -1 && !broadcastMode){
         remof = getValue(msg, ':', 3).toInt();
         ftfpath = getValue(msg, ':', 2);
         if (parseFile(ftfpath)){
@@ -3138,7 +3323,7 @@ void interpreter(String msg){
       }
     }
     if(cmd == "isrf"){
-      if(filereceivientstation == -1 && filesender == -1){
+      if(filereceivientstation == -1 && filesender == -1 && !broadcastMode){
         filedelai = (millis()/1000);
         filesender = getValue(msg, ':', 1).toInt();
         Serial.print("Récéption file de : ");
@@ -3208,13 +3393,111 @@ void interpreter(String msg){
       Serial.print("Version firmware : ");
       Serial.println(FIRMWARE_VERSION);
     }
-    if(cmd == "mkdir"){      
+    if(cmd == "mkdir"){
       Serial.print(getValue(msg, ':', 1));
       if(mkdirsd(getValue(msg, ':', 1))){
         Serial.println(" crée avec succès.");
       }
-      else{        
+      else{
         Serial.println(" non crée.");
+      }
+    }
+
+    // Diffusion de la réussite de compilation (schedulé 5 min après compileFile OK)
+    // Format diffusé : bcok:ID:STATION:CHEMIN
+    if (cmd == "bcok") {
+      String tempid = generateid();
+      String bcok = "bcok:";
+      bcok += tempid;
+      bcok += ":";
+      bcok += localAddress;
+      bcok += ":";
+      bcok += getValue(msg, ':', 1);  // chemin du fichier compilé
+      addValue(tempid);  // Éviter de retraiter notre propre bcok si reçu en écho
+      sendMessage(0, bcok, 0);  // Diffusion sans réveil
+      Serial.print("[BCOK] Diffusion réussite compilation : ");
+      Serial.println(getValue(msg, ':', 1));
+    }
+
+    // ================================================================
+    // DIFFUSION RÉSEAU : diff:chemin/fichier
+    // Diffuse un fichier vers l'ensemble du réseau (broadcast)
+    // ================================================================
+    if (cmd == "diff") {
+      if (!broadcastMode && filereceivientstation == -1 && filesender == -1) {
+        broadcastMode = true;
+        broadcastEmitter = true;
+        broadcastPath = getValue(msg, ':', 1);
+        lastBroadcastRecv = millis() / 1000;
+        lastBrdfSeq = -1;
+        brdfSeqCounter = 0;
+        Serial.print("[DIFF] Démarrage diffusion : ");
+        Serial.println(broadcastPath);
+        if (parseFile(broadcastPath)) {
+          prefs.putUInt("brdoffset", 0);
+          // Générer un ID unique pour le brdl
+          String tempid = generateid();
+          String brdl = "brdl:";
+          brdl += tempid;
+          brdl += ":";
+          brdl += broadcastPath;
+          addValue(tempid);  // Éviter de retraiter notre propre brdl en réception
+          sendMessage(1, brdl, 0);  // Réveil + diffusion vers tout le réseau
+          Serial.println("[DIFF] Signal brdl envoyé, attente propagation...");
+          // Démarrer l'envoi des lignes après 5s (laisser le réseau passer en mode réception)
+          scheduleCommand(5000, "brdfstart");
+        } else {
+          Serial.println("[DIFF] Erreur: impossible de parser le fichier");
+          broadcastMode = false;
+          broadcastEmitter = false;
+        }
+      } else {
+        Serial.println("[DIFF] Impossible: diffusion ou transfert déjà en cours");
+      }
+    }
+
+    // Déclenchement de l'envoi des lignes brdf (après délai propagation brdl)
+    if (cmd == "brdfstart") {
+      if (broadcastEmitter) {
+        broadcastFileSending = true;
+        lastBrdfSendMs = 0;  // Déclenche envoi immédiat au prochain passage dans loop()
+        Serial.println("[DIFF] Début envoi lignes brdf");
+      }
+    }
+
+    // Initialisation réception : suppression de rx.txt (interne, programmé via scheduleCommand)
+    if (cmd == "brdinit") {
+      remfromsd("/rx.txt");
+      Serial.println("[DIFF] rx.txt supprimé, prêt pour réception diffusion");
+    }
+
+    // Réception d'une ligne de données diffusée : brdf:SEQ:LINEDATA
+    if (cmd == "brdf") {
+      if (broadcastMode && !broadcastEmitter) {
+        // Extraction de LINEDATA en évitant les problèmes de split sur ':' dans les données
+        String seqStr = getValue(msg, ':', 1);
+        int lineStart = 5 + seqStr.length() + 1;  // "brdf:" + seqStr + ":"
+        String lineData = msg.substring(lineStart);
+        if (lineData.length() > 0) {
+          importfile("/rx.txt", lineData);
+          // Rétransmission sans réveil avec délai proportionnel au rang
+          String rbrdf = "trsms:0:";
+          rbrdf += msg;
+          scheduleCommand(20 * localAddress, rbrdf);
+        }
+      }
+    }
+
+    // Réception du signal de fin de diffusion : brde:ID:chemin
+    if (cmd == "brde") {
+      if (broadcastMode && !broadcastEmitter) {
+        String filePath = getValue(msg, ':', 2);
+        Serial.print("[DIFF] Fin diffusion reçue, compilation vers : ");
+        Serial.println(filePath);
+        broadcastMode = false;
+        lastBrdfSeq = -1;
+        compileFile(filePath, -1, 0);  // origin=-1 : pas de feok à envoyer
+        Serial.println("[DIFF] Reprise fonctionnement normal");
       }
     }
 }
