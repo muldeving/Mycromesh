@@ -3519,12 +3519,16 @@ void interpreter(String msg){
     }
     if(cmd == "cp"){
       String src = getValue(msg, ':', 1);
-      String dst = getValue(msg, ':', 2);
+      String dstDir = getValue(msg, ':', 2);
+      String fname = src.substring(src.lastIndexOf('/'));
+      String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
       Serial.println(src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "mv"){
       String src = getValue(msg, ':', 1);
-      String dst = getValue(msg, ':', 2);
+      String dstDir = getValue(msg, ':', 2);
+      String fname = src.substring(src.lastIndexOf('/'));
+      String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
       Serial.println(src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "ls"){
