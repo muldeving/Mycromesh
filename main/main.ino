@@ -2219,12 +2219,6 @@ bool cpsd(String src, String dst){
   delay(50);
   loraToSD();
 
-  if(!SD.exists(src)){
-    sdToLora();
-    delay(200);
-    return false;
-  }
-
   File srcFile = SD.open(src, FILE_READ);
   if(!srcFile){
     sdToLora();
@@ -2253,15 +2247,35 @@ bool cpsd(String src, String dst){
 }
 
 bool mvsd(String src, String dst){
-  if(!cpsd(src, dst)){
-    return false;
-  }
   delay(50);
   loraToSD();
-  bool ok = SD.remove(src);
+
+  File srcFile = SD.open(src, FILE_READ);
+  if(!srcFile){
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  File dstFile = SD.open(dst, FILE_WRITE);
+  if(!dstFile){
+    srcFile.close();
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  uint8_t buf[128];
+  while(srcFile.available()){
+    int n = srcFile.read(buf, sizeof(buf));
+    dstFile.write(buf, n);
+  }
+  srcFile.close();
+  dstFile.close();
+  SD.remove(src);
   sdToLora();
   delay(200);
-  return ok;
+  return true;
 }
 
 void lssd(String path){
@@ -2270,7 +2284,6 @@ void lssd(String path){
 
   File dir = SD.open(path);
   if(!dir || !dir.isDirectory()){
-    Serial.println("Dossier introuvable.");
     if(dir) dir.close();
     sdToLora();
     delay(200);
@@ -2279,21 +2292,13 @@ void lssd(String path){
 
   File entry = dir.openNextFile();
   while(entry){
-    if(entry.isDirectory()){
-      Serial.print("[DIR]  ");
-    } else {
-      Serial.print("[FILE] ");
-    }
     Serial.print(entry.name());
-    if(!entry.isDirectory()){
-      Serial.print("\t");
-      Serial.print(entry.size());
-      Serial.print(" o");
-    }
-    Serial.println();
+    if(entry.isDirectory()) Serial.print("/");
+    Serial.print(" ");
     entry.close();
     entry = dir.openNextFile();
   }
+  Serial.println();
   dir.close();
   sdToLora();
   delay(200);
@@ -3506,55 +3511,25 @@ void interpreter(String msg){
     }
     if(cmd == "rmdir"){
       String path = getValue(msg, ':', 1);
-      Serial.print(path);
-      if(rmdirsd(path)){
-        Serial.println(" supprimé avec succès.");
-      }
-      else{
-        Serial.println(" non supprimé.");
-      }
+      Serial.println(path + (rmdirsd(path) ? " ok" : " err"));
     }
     if(cmd == "rm"){
       String path = getValue(msg, ':', 1);
-      Serial.print(path);
-      if(remfromsd(path)){
-        Serial.println(" supprimé avec succès.");
-      }
-      else{
-        Serial.println(" non supprimé.");
-      }
+      Serial.println(path + (remfromsd(path) ? " ok" : " err"));
     }
     if(cmd == "cp"){
       String src = getValue(msg, ':', 1);
       String dst = getValue(msg, ':', 2);
-      Serial.print(src);
-      Serial.print(" -> ");
-      Serial.print(dst);
-      if(cpsd(src, dst)){
-        Serial.println(" copié avec succès.");
-      }
-      else{
-        Serial.println(" échec de la copie.");
-      }
+      Serial.println(src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "mv"){
       String src = getValue(msg, ':', 1);
       String dst = getValue(msg, ':', 2);
-      Serial.print(src);
-      Serial.print(" -> ");
-      Serial.print(dst);
-      if(mvsd(src, dst)){
-        Serial.println(" déplacé avec succès.");
-      }
-      else{
-        Serial.println(" échec du déplacement.");
-      }
+      Serial.println(src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "ls"){
       String path = getValue(msg, ':', 1);
       if(path == "") path = "/";
-      Serial.print("Contenu de ");
-      Serial.println(path);
       lssd(path);
     }
 
