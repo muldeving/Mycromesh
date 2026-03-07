@@ -962,7 +962,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
   if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u/%u oct CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
-    logV("frx:ok " + fnameced + " from:" + String(origin));
+    logN("frx:ok " + fnameced + (origin >= 0 ? " depuis " + String(origin) : " (broadcast)"));
     if(origin >= 0){
       String tempfeok = "send:";
       tempfeok += origin;
@@ -1346,7 +1346,7 @@ void startprocedure(){
   if(startstat == 1){
     interpreter("pigo");
     startstat = 2;
-    logV("start:2 ping");
+    logN("start: découverte du réseau...");
   }
   if(startstat == 2 && pingphase == 0 && ((millis()/1000) - fpingdel > 30)){
     startstat = 3;
@@ -1364,7 +1364,8 @@ void startprocedure(){
     starttime = millis() + starttimeout;
     startstat = 4;
     starttry = 1;
-    logV("start:4 gmap->" + String(nearestforstart));
+    logN("start: récup. carte depuis " + String(nearestforstart));
+   logV("start:4 gmap->" + String(nearestforstart));
    }
   }
   if(startstat == 4 && millis() >= starttime && starttry < 3){
@@ -1397,7 +1398,8 @@ void startprocedure(){
     starttime = millis() + starttimeout;
     startstat = 7;
     starttry = 1;
-    logV("start:7 geth->" + String(nearestforstart));
+   logN("start: synchro heure depuis " + String(nearestforstart));
+   logV("start:7 geth->" + String(nearestforstart));
    }
   }
   if(startstat == 7 && millis() >= starttime && starttry < 3){
@@ -1924,7 +1926,7 @@ bool exportfile() {
     tempfend += ":";
     tempfend += remof;
     interpreter(tempfend);
-    logN("ftx:ok dest:" + String(filereceivientstation) + " " + ftfpath);
+    logN("ftx:ok " + ftfpath + " -> dest " + String(filereceivientstation) + ", attente confirmation...");
     filereceivientstation = -1;
     isfdeson = false;
     return false;
@@ -2283,7 +2285,7 @@ void setup() {
     maintmode = true;
   }
 
-  logN("ok addr:" + String(localAddress));
+  logN("boot:ok  addr=" + String(localAddress) + "  fw=" + FIRMWARE_VERSION);
   actiontimer = (millis()/1000);
   lora.receive();
 }
@@ -2314,7 +2316,7 @@ void loop() {
     logD("umap:" + outgoingumap);
     addValue(getValue(outgoingumap, ':', 1));
     sendMessage(1, outgoingumap, 0);
-    logV("ping:done");
+    logN("ping:done " + String(numEdges) + " voisin(s)");
     fpingdel = millis() / 1000;
   }
 
@@ -2354,12 +2356,12 @@ void loop() {
   if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
-      logV("idle");
+      logN("idle: mise en veille dans quelques instants");
       writetosd();
       lora.receive();
       delay(100);
       int nextwup = nextWakeup() - 5;
-      logN("sleep:" + String(nextwup) + "s");
+      logN("sleep:" + String(nextwup) + "s (réveil dans " + String(nextwup/60) + "min)");
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
@@ -2370,7 +2372,7 @@ void loop() {
   }
   else{
     if(stationstat == 1){
-      logV("wake");
+      logN("wake: reprise activité");
     }
     stationstat = 0;
   }
@@ -2905,7 +2907,7 @@ void interpreter(String msg){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
       pingphase = 1;
-      logV("ping:1");
+      logN("ping:start");
       tmps = (millis()/1000);
     }  
     if(cmd == "dijk"){
@@ -2980,12 +2982,12 @@ void interpreter(String msg){
       }
     }
     if(cmd == "arok"){
-      logN("ack:id=" + getValue(msg, ':', 1) + " from:" + getValue(msg, ':', 2));
+      logN("msg:ok id=" + getValue(msg, ':', 1) + " livré à " + getValue(msg, ':', 2));
       togateRemoveById(getValue(msg, ':', 1).toInt());
       togateRemoveByIdFile(getValue(msg, ':', 1).toInt());
     }
     if(cmd == "rxok"){
-      logN("ack:id=" + getValue(msg, ':', 1) + " from:" + getValue(msg, ':', 2));
+      logV("msg:hop id=" + getValue(msg, ':', 1) + " via " + getValue(msg, ':', 2));
       removeEntryByID(getValue(msg, ':', 1));
     }
     if(cmd == "trsp"){
@@ -3075,7 +3077,7 @@ void interpreter(String msg){
       logV("seth:set=" + getValue(msg, ':', 1));
       if(startstat == 7){
         startstat = 8;
-        logN("start:ok");
+        logN("start:ok  nœud opérationnel addr=" + String(localAddress));
       }
     }
     if(cmd == "geth"){
@@ -3223,6 +3225,7 @@ void interpreter(String msg){
           infilecache = true;
           filereceivientstation = getValue(msg, ':', 1).toInt();
           filetxdelai = (millis()/1000);
+          logN("stft:prêt " + ftfpath + " -> dest " + String(filereceivientstation) + ", connexion en cours...");
           String tempisrf = "send:";
           tempisrf += filereceivientstation;
           tempisrf += ":isrf:";
@@ -3246,7 +3249,7 @@ void interpreter(String msg){
     }
     if(cmd == "rfok"){
       if(getValue(msg, ':', 1).toInt() == filereceivientstation && isfdeson == false){
-        logV("ftx:rx prêt");
+        logN("ftx:go -> dest " + String(filereceivientstation) + ", envoi de " + ftfpath);
         isfdeson = true;
         prefs.putUInt("offsetfile", 0);
         nbtogatefailfile = 0;
@@ -3256,7 +3259,7 @@ void interpreter(String msg){
     
     if(cmd == "fend"){
       if(getValue(msg, ':', 1).toInt() == filesender){
-        logV("frx:fin from:" + String(filesender) + " -> " + getValue(msg, ':', 2));
+        logN("frx:fin depuis " + String(filesender) + ", compilation -> " + getValue(msg, ':', 2));
         String tempfntc = "compileFile:";
         tempfntc += getValue(msg, ':', 2);
         tempfntc += ":";
