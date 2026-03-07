@@ -2197,6 +2197,113 @@ bool mkdirsd(String rmpath){
   }
 }
 
+bool rmdirsd(String rmpath){
+  delay(50);
+  loraToSD();
+
+  if(SD.rmdir(rmpath)){
+    delay(100);
+    sdToLora();
+    delay(200);
+    return true;
+  }
+  else{
+    delay(100);
+    sdToLora();
+    delay(200);
+    return false;
+  }
+}
+
+bool cpsd(String src, String dst){
+  delay(50);
+  loraToSD();
+
+  File srcFile = SD.open(src, FILE_READ);
+  if(!srcFile){
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  File dstFile = SD.open(dst, FILE_WRITE);
+  if(!dstFile){
+    srcFile.close();
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  uint8_t buf[128];
+  while(srcFile.available()){
+    int n = srcFile.read(buf, sizeof(buf));
+    dstFile.write(buf, n);
+  }
+  srcFile.close();
+  dstFile.close();
+  sdToLora();
+  delay(200);
+  return true;
+}
+
+bool mvsd(String src, String dst){
+  delay(50);
+  loraToSD();
+
+  File srcFile = SD.open(src, FILE_READ);
+  if(!srcFile){
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  File dstFile = SD.open(dst, FILE_WRITE);
+  if(!dstFile){
+    srcFile.close();
+    sdToLora();
+    delay(200);
+    return false;
+  }
+
+  uint8_t buf[128];
+  while(srcFile.available()){
+    int n = srcFile.read(buf, sizeof(buf));
+    dstFile.write(buf, n);
+  }
+  srcFile.close();
+  dstFile.close();
+  SD.remove(src);
+  sdToLora();
+  delay(200);
+  return true;
+}
+
+void lssd(String path){
+  delay(50);
+  loraToSD();
+
+  File dir = SD.open(path);
+  if(!dir || !dir.isDirectory()){
+    if(dir) dir.close();
+    sdToLora();
+    delay(200);
+    return;
+  }
+
+  File entry = dir.openNextFile();
+  while(entry){
+    Serial.print(entry.name());
+    if(entry.isDirectory()) Serial.print("/");
+    Serial.print(" ");
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  Serial.println();
+  dir.close();
+  sdToLora();
+  delay(200);
+}
+
 void large(String tosdlarge, int tosendlarge){
   if(filereceivientstation == -1 && filesender == -1){
       delay(50);
@@ -3401,6 +3508,33 @@ void interpreter(String msg){
       else{
         Serial.println(" non crée.");
       }
+    }
+    if(cmd == "rmdir"){
+      String path = getValue(msg, ':', 1);
+      Serial.println(path + (rmdirsd(path) ? " ok" : " err"));
+    }
+    if(cmd == "rm"){
+      String path = getValue(msg, ':', 1);
+      Serial.println(path + (remfromsd(path) ? " ok" : " err"));
+    }
+    if(cmd == "cp"){
+      String src = getValue(msg, ':', 1);
+      String dstDir = getValue(msg, ':', 2);
+      String fname = src.substring(src.lastIndexOf('/'));
+      String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
+      Serial.println(src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
+    }
+    if(cmd == "mv"){
+      String src = getValue(msg, ':', 1);
+      String dstDir = getValue(msg, ':', 2);
+      String fname = src.substring(src.lastIndexOf('/'));
+      String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
+      Serial.println(src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
+    }
+    if(cmd == "ls"){
+      String path = getValue(msg, ':', 1);
+      if(path == "") path = "/";
+      lssd(path);
     }
 
     // Diffusion de la réussite de compilation (schedulé 5 min après compileFile OK)
