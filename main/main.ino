@@ -55,6 +55,13 @@ bool maintmode = true;
 int stationgateway = 1;
 long TOGATE_COMMAND_TIMEOUT = 60000;
 
+// Niveaux de sortie série : 0=rien, 1=normal, 2=verbose, 3=debug
+#define LOG_NONE    0
+#define LOG_NORMAL  1
+#define LOG_VERBOSE 2
+#define LOG_DEBUG   3
+int serialLevel = 1;
+
 // variables d'état
 
 int startstat = 0;
@@ -184,11 +191,15 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
+void logN(const String& msg) { if(serialLevel >= LOG_NORMAL)  Serial.println(msg); }
+void logV(const String& msg) { if(serialLevel >= LOG_VERBOSE) Serial.println(msg); }
+void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   Serial.println(msg); }
+
 void loraToSD() {
     lora.releaseBus();
     digitalWrite(20, 0);
     delay(100);
-    if (!SD.begin(7)) { Serial.println("PBsd"); }
+    if (!SD.begin(7)) { logN("err:sd"); }
 }
 
 void sdToLora() {
@@ -198,18 +209,14 @@ void sdToLora() {
 
 bool togateAddCommand(int id, String command) {
   if (togateCount >= MAX_TOGATE_COMMANDS) {
-    Serial.println("[Togate] Erreur : file pleine, commande non ajoutée.");
+    logN("err:togate file pleine");
     return false;
   }
 
   togateQueue[togateCount].id = id;
   togateQueue[togateCount].command = command;
   togateQueue[togateCount].timestamp = millis();
-  Serial.print("[Togate] Commande ajoutée : ID=");
-  Serial.print(id);
-  Serial.print(", Commande=\"");
-  Serial.print(command);
-  Serial.println("\"");
+  logD("togate:add id=" + String(id));
   togateCount++;
   return true;
 }
@@ -220,14 +227,7 @@ void togatePurgeOld() {
 
   for (int i = 0; i < togateCount; ) {
     if ((millis() - togateQueue[i].timestamp) > TOGATE_COMMAND_TIMEOUT) {
-      Serial.print("[Togate] Suppression automatique (ancienne) : ID=");
-      Serial.print(togateQueue[i].id);
-      Serial.print(", Commande=\"");
-      Serial.print(togateQueue[i].command);
-      Serial.println("\"");
-
-      Serial.print("ctg to sd : ");      
-      Serial.println(togateQueue[i].command);
+      logD("togate:expire id=" + String(togateQueue[i].id));
       prefs.putBool("incache", true);
       nbtogatefail ++;
       if (nbtogatefail >= 5 && prefs.getBool("isgateonline", 0) == 1){        
@@ -243,7 +243,7 @@ void togatePurgeOld() {
         myFile.close();
       }
       else{
-        Serial.println("PBfile");
+        logN("err:sd togate.cache");
       }
 
       sdToLora();
@@ -264,11 +264,7 @@ void togatePurgeOld() {
 bool togateRemoveById(int id) {
   for (int i = 0; i < togateCount; i++) {
     if (togateQueue[i].id == id) {
-      Serial.print("[Togate] Suppression par ID : ID=");
-      Serial.print(togateQueue[i].id);
-      Serial.print(", Commande=\"");
-      Serial.print(togateQueue[i].command);
-      Serial.println("\"");      
+      logD("togate:rm id=" + String(id));
       prefs.putBool("isgateonline", true);
       ltgdel = (millis()/1000);
       nbtogatefail = 0;
@@ -281,9 +277,7 @@ bool togateRemoveById(int id) {
     }
   }
 
-  Serial.print("[Togate] Aucun ID correspondant à ");
-  Serial.print(id);
-  Serial.println(" trouvé.");
+  logD("togate:id " + String(id) + " non trouvé");
   return false;
 }
 
@@ -292,27 +286,18 @@ void togateAddCommandFile(int id, String command) {
   // Vérifier si l'ID existe déjà
   for (int i = 0; i < togateCountFile; i++) {
     if (togateQueueFile[i].id == id) {
-      Serial.print("[TogateFile] ID ");
-      Serial.print(id);
-      Serial.println(" existe déjà, mise à jour ignorée.");
-      return;
+      return;  // déjà présent
     }
   }
 
-  // Ajouter la nouvelle commande
   if (togateCountFile < MAX_TOGATE_COMMANDS_FILE) {
     togateQueueFile[togateCountFile].id = id;
     togateQueueFile[togateCountFile].command = command;
     togateQueueFile[togateCountFile].timestamp = millis();
     togateCountFile++;
-    
-    Serial.print("[TogateFile] Ajout commande : ID=");
-    Serial.print(id);
-    Serial.print(", Commande=\"");
-    Serial.print(command);
-    Serial.println("\"");
+    logD("togatef:add id=" + String(id));
   } else {
-    Serial.println("[TogateFile] Erreur : file de commandes pleine.");
+    logN("err:togatef file pleine");
   }
 }
 
@@ -320,11 +305,7 @@ void togateAddCommandFile(int id, String command) {
 bool togateRemoveByIdFile(int id) {
   for (int i = 0; i < togateCountFile; i++) {
     if (togateQueueFile[i].id == id) {
-      Serial.print("[TogateFile] Suppression par ID : ID=");
-      Serial.print(togateQueueFile[i].id);
-      Serial.print(", Commande=\"");
-      Serial.print(togateQueueFile[i].command);
-      Serial.println("\"");
+      logD("togatef:rm id=" + String(id));
       
       isfdeson = true;
       ltgdelfile = (millis()/1000);
@@ -339,9 +320,7 @@ bool togateRemoveByIdFile(int id) {
     }
   }
 
-  Serial.print("[TogateFile] Aucun ID correspondant à ");
-  Serial.print(id);
-  Serial.println(" trouvé.");
+  logD("togatef:id " + String(id) + " non trouvé");
   return false;
 }
 
@@ -353,9 +332,7 @@ void purgeToOldFile() {
   
   for (int i = 0; i < togateCountFile; i++) {
     if (currentTime - togateQueueFile[i].timestamp >= TOGATE_COMMAND_TIMEOUT) {
-      Serial.print("[TogateFile] Commande expirée : ID=");
-      Serial.print(togateQueueFile[i].id);
-      Serial.println(", remise dans tx.txt");
+      logD("togatef:expire id=" + String(togateQueueFile[i].id));
       ltgdelfile = (millis()/1000);
       
       linesToRestore += togateQueueFile[i].command;
@@ -381,9 +358,9 @@ void purgeToOldFile() {
     if (myFile) {
       myFile.print(linesToRestore);
       myFile.close();
-      Serial.println("[PurgeFile] Lignes restaurées dans tx.txt");
+      logD("togatef:restore tx.txt");
     } else {
-      Serial.println("[PurgeFile] Erreur ouverture tx.txt");
+      logN("err:sd tx.txt restore");
     }
     sdToLora();
   }
@@ -391,28 +368,24 @@ void purgeToOldFile() {
   // Si trop d'échecs, marquer la gate comme hors ligne
   if (nbtogatefailfile >= 3 && isfdeson == 1) {
     isfdeson = false;
-    Serial.println("[TogateFile] Gate marquée hors ligne (trop d'échecs).");
+    logV("ftx:gate hors ligne");
   }
 }
 
 
 // Fonction pour ajouter une nouvelle entrée
 void addPingEntry(int nbtoping, int nbping) {
-    for (int i = 0; i < pingCount; i++) {
-    if (pingList[i].nbtoping == nbtoping) {
-      Serial.print("Existe déja: ");
-      Serial.println(pingList[i].nbtoping);
-      return;
-    }
-  }  
+  for (int i = 0; i < pingCount; i++) {
+    if (pingList[i].nbtoping == nbtoping) { return; }
+  }
   if (pingCount < MAX_PINGS) {
     pingList[pingCount].nbtoping = nbtoping;
     pingList[pingCount].pingTime = millis();
     pingList[pingCount].nbping = nbping;
     pingCount++;
-    Serial.println("Nouvelle entrée de ping ajoutée.");
+    logD("ping:add " + String(nbtoping));
   } else {
-    Serial.println("Liste pleine, impossible d'ajouter une nouvelle entrée de ping.");
+    logD("ping:liste pleine");
   }
 }
 
@@ -425,10 +398,7 @@ void checkAndRemoveOldPingEntries() {
         // Augmenter nbping et mettre à jour pingTime
         pingList[i].nbping++;
         pingList[i].pingTime = currentMillis;
-        Serial.print("Mise à jour de l'entrée nbtoping: ");
-        Serial.print(pingList[i].nbtoping);
-        Serial.print(" -> nbping: ");
-        Serial.println(pingList[i].nbping);
+        logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
         
         String tempping = "trsm:";
         tempping += pingList[i].nbtoping;
@@ -437,12 +407,10 @@ void checkAndRemoveOldPingEntries() {
         
         i++; // Passer à l'entrée suivante
       } else {
-        // Supprimer l'entrée si nbping > 3
-        Serial.print("Suppression de l'entrée nbtoping: ");
-        Serial.println(pingList[i].nbtoping);
+        logD("ping:rm " + String(pingList[i].nbtoping));
         String outgoingumap = exportEdgesContainingVertex(localAddress);
         addValue(getValue(outgoingumap, ':', 1));
-        Serial.println(outgoingumap);
+        logD("umap:" + outgoingumap);
         sendMessage(1, outgoingumap, 0);
         for (int j = i; j < pingCount - 1; j++) {
           pingList[j] = pingList[j + 1];
@@ -460,8 +428,7 @@ void checkAndRemoveOldPingEntries() {
 void removePingEntryByNbtoping(int nbtoping) {
   for (int i = 0; i < pingCount; i++) {
     if (pingList[i].nbtoping == nbtoping) {
-      Serial.print("Suppression de l'entrée nbtoping: ");
-      Serial.println(pingList[i].nbtoping);
+      logD("ping:rm " + String(nbtoping));
       for (int j = i; j < pingCount - 1; j++) {
         pingList[j] = pingList[j + 1];
       }
@@ -469,8 +436,6 @@ void removePingEntryByNbtoping(int nbtoping) {
       return;
     }
   }
-  Serial.print("Aucune entrée trouvée avec nbtoping: ");
-  Serial.println(nbtoping);
 }
 
 // Fonction pour ajouter une nouvelle entrée
@@ -481,9 +446,9 @@ void addEntry(const String& id, int nbtrysend, const String& msgtosend) {
     entryList[entryCount].nbtrysend = nbtrysend;
     entryList[entryCount].msgtosend = msgtosend;
     entryCount++;
-    Serial.println("Nouvelle entrée ajoutée.");
+    logD("entry:add id=" + id);
   } else {
-    Serial.println("Liste pleine, impossible d'ajouter une nouvelle entrée.");
+    logD("entry:liste pleine");
   }
 }
 
@@ -496,18 +461,11 @@ void checkAndRemoveOldEntries() {
         // Augmenter nbtrysend et mettre à jour timesend
         entryList[i].nbtrysend++;
         entryList[i].timesend = currentMillis;
-        Serial.print("Mise à jour de l'entrée ID: ");
-        Serial.print(entryList[i].id);
-        Serial.print(" -> nbtrysend: ");
-        Serial.println(entryList[i].nbtrysend);
+        logD("entry:retry id=" + entryList[i].id + " n=" + String(entryList[i].nbtrysend));
         dijkstra(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt(), entryList[i].msgtosend);
-        Serial.println(entryList[i].msgtosend);
-        Serial.println(getValue(entryList[i].msgtosend, ':', 1).toInt());
         i++; // Passer à l'entrée suivante
       } else {
-        // Supprimer l'entrée si nbtrysend > 3                
-        Serial.print("Suppression de l'entrée ID: ");
-        Serial.println(entryList[i].id);
+        logD("entry:rm id=" + entryList[i].id);
         for (int j = i; j < entryCount - 1; j++) {
           entryList[j] = entryList[j + 1];
         }
@@ -544,8 +502,7 @@ bool deststilinl(int dest){
 void removeEntryByID(const String& id) {
   for (int i = 0; i < entryCount; i++) {
     if (entryList[i].id == id) {
-      Serial.print("Suppression de l'entrée ID: ");
-      Serial.println(entryList[i].id);
+      logD("entry:rm id=" + id);
       for (int j = i; j < entryCount - 1; j++) {
         entryList[j] = entryList[j + 1];
       }
@@ -553,8 +510,6 @@ void removeEntryByID(const String& id) {
       return;
     }
   }
-  Serial.print("Aucune entrée trouvée avec l'ID: ");
-  Serial.println(id);
 }
 
 void initGaloisField() {
@@ -669,27 +624,25 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 // ---------------- PARSE ----------------
 bool parseFile(String path) {
   cpuTurbo();
-  Serial.println("\n=== PARSE ===");
+  logD("parse:start " + path);
   delay(50);
   loraToSD();
-  if (!SD.exists(path)) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" introuvable"); return false; }
+  if (!SD.exists(path)) { logN("err:parse " + path + " introuvable"); return false; }
   File inF = SD.open(path, FILE_READ);
-  if (!inF) { Serial.print("ERREUR: "); Serial.print(path); Serial.println(" inouvrable"); return false; }
+  if (!inF) { logN("err:parse " + path + " inouvrable"); return false; }
 
   uint32_t fileSize = inF.size();
   uint32_t fcrc = crc32_file(inF);
   inF.seek(0);
 
-  Serial.printf("Source: %u bytes, CRC=%08X\n", fileSize, fcrc);
-
   uint32_t totalDataPackets = (fileSize + PACKET_SIZE - 1) / PACKET_SIZE;
   uint32_t parityGroups = (totalDataPackets + GROUP_K - 1) / GROUP_K;
 
-  Serial.printf("Config: %u packets, %u groupes\n", totalDataPackets, parityGroups);
+  if(serialLevel >= LOG_DEBUG){ Serial.printf("parse:%u oct CRC=%08X pkt=%u grp=%u\n", fileSize, fcrc, totalDataPackets, parityGroups); }
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
-  if (!tx) { inF.close(); Serial.println("ERREUR création tx.txt"); return false; }
+  if (!tx) { inF.close(); logN("err:parse tx.txt"); return false; }
 
   tx.printf("META:%u:%08X:%u:%u\n", totalDataPackets, fcrc, fileSize, parityGroups);
   tx.flush();
@@ -748,7 +701,7 @@ bool parseFile(String path) {
 
     if ((g+1) % 20 == 0) {
       tx.flush();
-      Serial.printf("Encodage: %u/%u groupes\n", g+1, parityGroups);
+      if(serialLevel >= LOG_DEBUG){ Serial.printf("encode:%u/%u\n", g+1, parityGroups); }
     }
   }
 
@@ -762,32 +715,32 @@ bool parseFile(String path) {
   if (SD.exists("/large.cmd") && path == "/large.cmd") SD.remove("/large.cmd");
 
   sdToLora();
-  Serial.println("PARSE terminé.");
+  logV("parse:ok " + path);
   return true;
 }
 
 // ---------------- COMPILE ----------------
 void compileFile(String fnameced, int origin, int toremof) {
   cpuTurbo();
-  Serial.println("\n=== COMPILE ===");
+  logD("compile:start " + fnameced);
   delay(50);
   loraToSD();
-  if (!SD.exists("/rx.txt")) { Serial.println("ERREUR: /rx.txt introuvable"); return; }
+  if (!SD.exists("/rx.txt")) { logN("err:compile rx.txt introuvable"); return; }
   File rx = SD.open("/rx.txt", FILE_READ);
-  if (!rx) { Serial.println("ERREUR ouverture rx.txt"); return; }
+  if (!rx) { logN("err:compile rx.txt"); return; }
 
   String meta = rx.readStringUntil('\n'); meta.trim();
-  if (!meta.startsWith("META:")) { rx.close(); Serial.println("ERREUR META"); return; }
+  if (!meta.startsWith("META:")) { rx.close(); logN("err:compile META"); return; }
 
   unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0;
   int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
-  if (scanned<4) { Serial.println("ERREUR parse meta"); rx.close(); return; }
+  if (scanned<4) { logN("err:compile parse meta"); rx.close(); return; }
 
-  Serial.printf("Attendu: %u packets, %u bytes, CRC=%08X\n", totalDataPackets, expectedSize, fileCRC);
+  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u pkt %u oct CRC=%08X\n", totalDataPackets, expectedSize, fileCRC); }
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
-  if (!out) { rx.close(); Serial.println("ERREUR out"); return; }
+  if (!out) { rx.close(); logN("err:compile out"); return; }
 
   uint32_t bytesWritten=0;
 
@@ -976,7 +929,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
     if ((g+1) % 10 == 0) {
       out.flush();
-      Serial.printf("Décodage: %u/%u groupes\n", g+1, parityGroups);
+      if(serialLevel >= LOG_DEBUG){ Serial.printf("decode:%u/%u\n", g+1, parityGroups); }
     }
   }
 
@@ -987,10 +940,10 @@ void compileFile(String fnameced, int origin, int toremof) {
   out.close();
   rx.close();
 
-  Serial.printf("Lignes rejetées (CRC16): %d\n", crcRejects);
+  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:CRC rejects=%d\n", crcRejects); }
 
   File outf = SD.open(fnameced, FILE_READ);
-  if (!outf) { Serial.println("ERREUR: fichier de sortie introuvable"); sdToLora(); return; }
+  if (!outf) { logN("err:compile sortie introuvable"); sdToLora(); return; }
   uint32_t finalCRC=crc32_file(outf);
   uint32_t finalSize=outf.size();
   SD.remove("/rx.txt");
@@ -998,7 +951,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   outf = SD.open(fnameced, FILE_READ);
   String tointlarge;
   if(fnameced == "/large.cmd"){
-    Serial.println("lecture");
+    logD("large.cmd: lecture");
     while (outf.available()) {
       tointlarge += (char)outf.read();
     }
@@ -1007,19 +960,9 @@ void compileFile(String fnameced, int origin, int toremof) {
   outf.close();
   sdToLora();
 
-  Serial.printf("FINAL size=%u/%u CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC);
+  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u/%u oct CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
-    Serial.println("File OK");
-    Serial.print("Le fichier : ");
-    Serial.print(fnameced);
-    Serial.print(" de : ");
-    Serial.print(origin);
-    if(toremof == 1){
-      Serial.println(" sera supprimer");
-    }
-    else{
-      Serial.println(" ne sera pas supprimer");
-    }
+    logV("frx:ok " + fnameced + " from:" + String(origin));
     if(origin >= 0){
       String tempfeok = "send:";
       tempfeok += origin;
@@ -1029,7 +972,7 @@ void compileFile(String fnameced, int origin, int toremof) {
       tempfeok += fnameced;
       tempfeok += ":";
       tempfeok += toremof;
-      Serial.println(tempfeok);
+      logD("compile:feok " + tempfeok);
       interpreter(tempfeok);
     }
     // Diffusion de la réussite de compilation uniquement pour les fichiers reçus via diff
@@ -1039,7 +982,7 @@ void compileFile(String fnameced, int origin, int toremof) {
       scheduleCommand(300000, bcokCmd);  // 5 min = 300 000 ms
     }
     if(fnameced == "/large.cmd"){
-      Serial.println(tointlarge);
+      logD("large.cmd: " + tointlarge);
       scheduleCommand(500, tointlarge);
     }
   }
@@ -1098,8 +1041,7 @@ String exportEdgesContainingVertex(int vertex) {
   }
   
   if (umapCommand.length() == 4) { // "umap" only
-    Serial.print("Aucune arête trouvée contenant le sommet ");
-    Serial.println(vertex);
+    logD("edge:aucune pour " + String(vertex));
     return "";
   }
   
@@ -1114,12 +1056,7 @@ void addOrUpdateEdge(int v1, int v2, int weight) {
       // Calculate the average of the current weight and the new weight
       edges[i].weight = (edges[i].weight + weight) / 2;
       edgeExists = true;
-      Serial.print("Poids de l'arête mise à jour avec la moyenne: ");
-      Serial.print(v1);
-      Serial.print(" - ");
-      Serial.print(v2);
-      Serial.print(" avec un poids de ");
-      Serial.println(edges[i].weight);
+      logD("edge:upd " + String(v1) + "-" + String(v2) + " w=" + String(edges[i].weight));
       break;
     }
   }
@@ -1129,32 +1066,24 @@ void addOrUpdateEdge(int v1, int v2, int weight) {
     edges[numEdges].vertex2 = v2;
     edges[numEdges].weight = weight;
     numEdges++;
-    Serial.print("Nouvelle arête ajoutée : ");
-    Serial.print(v1);
-    Serial.print(" - ");
-    Serial.print(v2);
-    Serial.print(" avec un poids de ");
-    Serial.println(weight);
+    logD("edge:add " + String(v1) + "-" + String(v2) + " w=" + String(weight));
     updateVertices();
   } else if (numEdges >= MAX_EDGES) {
-    Serial.println("Le tableau d'arêtes est plein. Impossible d'ajouter une nouvelle arête.");
+    logN("err:edge table pleine");
   }
 }
 
 void clearEdges() {
   numEdges = 0;
-  Serial.println("Tableau d'arêtes vidé.");
+  logV("edge:clear");
   updateVertices();
 }
 
 void printEdges() {
-  Serial.println("Tableau d'arêtes :");
+  if(serialLevel < LOG_NORMAL) return;
+  Serial.println("edges:");
   for (int i = 0; i < numEdges; i++) {
-    Serial.print(edges[i].vertex1);
-    Serial.print(" - ");
-    Serial.print(edges[i].vertex2);
-    Serial.print(" | Poids : ");
-    Serial.println(edges[i].weight);
+    Serial.println(String(edges[i].vertex1) + "-" + String(edges[i].vertex2) + " w:" + String(edges[i].weight));
   }
 }
 
@@ -1258,7 +1187,7 @@ bool dijkstra(int src, int dest, String outgoing) {
   int destIndex = getVertexIndex(dest);
 
   if (srcIndex == -1 || destIndex == -1) {
-    Serial.println("Source ou destination invalide.");
+    logD("dijk:err src/dest invalide");
     return false;
   }
 
@@ -1280,29 +1209,14 @@ bool dijkstra(int src, int dest, String outgoing) {
   }
 
   if (dist[destIndex] == INT_MAX) {
-    Serial.println("Aucun chemin trouvé.");
+    logD("dijk:no path " + String(src) + "->" + String(dest));
     return false;
   }
 
-  Serial.print("Distance de ");
-  Serial.print(src);
-  Serial.print(" à ");
-  Serial.print(dest);
-  Serial.print(" est ");
-  Serial.println(dist[destIndex]);
-
   String path = "";
   printPath(parent, destIndex, path);
-  Serial.print("Chemin: ");
-  Serial.println(path);
-
   int nextStep = getNextStep(parent, destIndex, srcIndex);
-  Serial.print("Prochaine étape de ");
-  Serial.print(src);
-  Serial.print(" à ");
-  Serial.print(dest);
-  Serial.print(" est ");
-  Serial.println(nextStep);
+  logD("dijk:" + String(src) + "->" + String(dest) + " next=" + String(nextStep) + " d=" + String(dist[destIndex]));
   String tosenddijk = "trsm:";
   tosenddijk += nextStep;
   tosenddijk += ":";
@@ -1319,9 +1233,7 @@ void removeEdgesByVertex(int v) {
     }
   }
   numEdges = newNumEdges;
-  Serial.print("Toutes les liaisons impliquant ");
-  Serial.print(v);
-  Serial.println(" ont été supprimées.");
+  logD("edge:clear vertex=" + String(v));
   updateVertices();
 }
 
@@ -1334,21 +1246,11 @@ void removeEdge(int v1, int v2) {
       for (int j = i; j < numEdges - 1; j++) {
         edges[j] = edges[j + 1];
       }
-      numEdges--; // Réduire le nombre total d'arêtes
+      numEdges--;
       edgeFound = true;
-      Serial.print("Arête supprimée : ");
-      Serial.print(v1);
-      Serial.print(" - ");
-      Serial.println(v2);
-      break; // On sort de la boucle après avoir trouvé et supprimé l'arête
+      logD("edge:rm " + String(v1) + "-" + String(v2));
+      break;
     }
-  }
-
-  if (!edgeFound) {
-    Serial.print("Arête introuvable entre ");
-    Serial.print(v1);
-    Serial.print(" et ");
-    Serial.println(v2);
   }
 }
 
@@ -1357,10 +1259,7 @@ int findNearestVertex(int src) {
 
   int srcIndex = getVertexIndex(src);
 
-  if (srcIndex == -1) {
-    Serial.println("Sommet source invalide.");
-    return -1;
-  }
+  if (srcIndex == -1) { return -1; }
 
   int minWeight = INT_MAX;
   int nearestVertex = -1;
@@ -1375,17 +1274,7 @@ int findNearestVertex(int src) {
     }
   }
 
-  if (nearestVertex == -1) {
-    Serial.println("Aucun sommet voisin trouvé.");
-  } else {
-    Serial.print("Le sommet le plus proche de ");
-    Serial.print(src);
-    Serial.print(" est ");
-    Serial.print(nearestVertex);
-    Serial.print(" avec un poids de ");
-    Serial.println(minWeight);
-  }
-
+  logD("nearest:" + String(src) + "->" + String(nearestVertex) + " w=" + String(minWeight));
   return nearestVertex;
 }
 
@@ -1394,10 +1283,6 @@ void addValue(String newValue) {
     dataArray[dataCount].value = newValue;
     dataArray[dataCount].time = millis();
     dataCount++;
-    Serial.print("Valeur ajoutée : ");
-    Serial.println(newValue);
-  } else {
-    Serial.println("Erreur : tableau plein !");
   }
 }
 
@@ -1406,8 +1291,6 @@ void removeExpiredValues() {
 
   for (int i = 0; i < dataCount; i++) {
     if (currentTime - dataArray[i].time >= DELAY) {
-      Serial.print("Valeur supprimée : ");
-      Serial.println(dataArray[i].value);
       
       // Déplace toutes les valeurs suivantes d'une place vers l'avant
       for (int j = i; j < dataCount - 1; j++) {
@@ -1421,14 +1304,11 @@ void removeExpiredValues() {
 }
 
 void printDataArray() {
-  Serial.println("Tableau actuel :");
+  if(serialLevel < LOG_NORMAL) return;
+  Serial.println("cache:");
   for (int i = 0; i < dataCount; i++) {
-    Serial.print("Valeur : ");
-    Serial.print(dataArray[i].value);
-    Serial.print(", Temps restant : ");
-    Serial.println(DELAY - (millis() - dataArray[i].time));
+    Serial.println(dataArray[i].value + " +" + String(DELAY - (millis() - dataArray[i].time)) + "ms");
   }
-  Serial.println();
 }
 
 // Fonction pour rechercher une valeur dans le tableau
@@ -1466,79 +1346,70 @@ void startprocedure(){
   if(startstat == 1){
     interpreter("pigo");
     startstat = 2;
-    Serial.println("startstat : 2");
+    logV("start:2 ping");
   }
   if(startstat == 2 && pingphase == 0 && ((millis()/1000) - fpingdel > 30)){
     startstat = 3;
   }
   if(startstat == 3){
-   Serial.println("startstat : 3");
    nearestforstart = findNearestVertex(localAddress);
-   Serial.println(nearestforstart);
-   if(nearestforstart == -1){    
+   logV("start:3 nearest=" + String(nearestforstart));
+   if(nearestforstart == -1){
     startstat = 9;
-    Serial.println("startstat : 9");
-    Serial.println("Echec procedure de demarrage");
+    logN("err:start echec (pas de voisin)");
     return;
    }
-   else{         
-    sendMessage(1, "gmap", nearestforstart);  
-    starttime = millis() + starttimeout;  
+   else{
+    sendMessage(1, "gmap", nearestforstart);
+    starttime = millis() + starttimeout;
     startstat = 4;
     starttry = 1;
-    Serial.println("startstat : 4");
+    logV("start:4 gmap->" + String(nearestforstart));
    }
   }
-  if(startstat == 4 && millis() >= starttime && starttry < 3){         
+  if(startstat == 4 && millis() >= starttime && starttry < 3){
     sendMessage(1, "gmap", nearestforstart);
-    starttry ++; 
-    starttime = millis() + starttimeout;  
-    Serial.println("startstat : 4");
-    Serial.println("pas de reception map");
+    starttry ++;
+    starttime = millis() + starttimeout;
+    logV("start:4 retry gmap");
   }
-  if(startstat == 4 && millis() >= starttime && starttry >= 3){      
+  if(startstat == 4 && millis() >= starttime && starttry >= 3){
     startstat = 3;
-    Serial.println("pas de reception map");
-    Serial.println("startstat : 3");
-    Serial.println(nearestforstart);
+    logV("start:3 map timeout, retry");
     removeEdge(localAddress, nearestforstart);
   }
   if(startstat == 5 && ((millis()/1000) - rtmapdel > 40)){
     startstat = 6;
-    Serial.println("startstat : 6");
+    logV("start:6 map ok");
     }
   if(startstat == 6){
-   Serial.println("startstat : 6");
    delay(3000);
    nearestforstart = findNearestVertex(localAddress);
-   Serial.println(nearestforstart);
-   if(nearestforstart == -1){    
+   logV("start:6 nearest=" + String(nearestforstart));
+   if(nearestforstart == -1){
     startstat = 9;
-    Serial.println("startstat : 9");
-    Serial.println("Echec procedure de demarrage");
+    logN("err:start echec (pas de voisin apres map)");
     return;
    }
    else{
     timegeth = millis();
-    sendMessage(1, "geth", nearestforstart);  
-    starttime = millis() + starttimeout;  
+    sendMessage(1, "geth", nearestforstart);
+    starttime = millis() + starttimeout;
     startstat = 7;
     starttry = 1;
-    Serial.println("startstat : 7");
+    logV("start:7 geth->" + String(nearestforstart));
    }
   }
   if(startstat == 7 && millis() >= starttime && starttry < 3){
     timegeth = millis();
     sendMessage(1, "geth", nearestforstart);
-    starttry ++; 
-    starttime = millis() + starttimeout;  
-    Serial.println("startstat : 6");
-    Serial.println("pas de reception time");
+    starttry ++;
+    starttime = millis() + starttimeout;
+    logV("start:7 retry geth");
   }
-  if(startstat == 7 && millis() >= starttime && starttry >= 3){ 
-    Serial.println("pas de reception time");     
+  if(startstat == 7 && millis() >= starttime && starttry >= 3){
     startstat = 6;
-    Serial.println("startstat : 6");
+    logV("start:6 time timeout, retry");
     removeEdge(localAddress, nearestforstart);
   }
 }
@@ -1575,7 +1446,7 @@ String exportdata(String ver){
       myFile.close();
     }
     else{
-      Serial.println("PBfile");
+      logN("err:sd datadump");
     }
 
     sdToLora();
@@ -1607,7 +1478,6 @@ String compildata(String outstandstruct, String indump){
 }
 
 String extractvalue(String indump, String rshval){
-  Serial.println(rshval.substring(0, 1));
 
   if(rshval.substring(0, 1) == "n"){
     float temprecoval = 0;
@@ -1616,7 +1486,6 @@ String extractvalue(String indump, String rshval){
     while(getValue(indump, ';', i) != "") {
       String toandump = getValue(indump, ';', i);
       if(getValue(toandump, ':', 0) == rshval){
-        Serial.println(getValue(toandump, ':', 1));
         temprecoval = temprecoval + getValue(toandump, ':', 1).toFloat();
         temprecocon ++;
       }
@@ -1644,34 +1513,18 @@ String extractvalue(String indump, String rshval){
   }
 }
 
-void startsensor(){  
-  if (!bme.begin()) {
-    Serial.println(F("Could not find a valid BME680 sensor, check wiring!"));
-  }
-else{
-  Serial.println(F("BME680 OK"));
-}
+void startsensor(){
+  if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
 
-  // Set up oversampling and filter initialization
   bme.setTemperatureOversampling(BME680_OS_8X);
   bme.setHumidityOversampling(BME680_OS_2X);
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-  bme.setGasHeater(320, 150); // 320*C for 150 ms
+  bme.setGasHeater(320, 150);
 
-if (aht.begin() != true) {
-Serial.println(F("AHT20 not connected or fail to load calibration coefficient")); //(F()) save string to flash & keeps dynamic memory free
-}
-else{
-  Serial.println(F("AHT20 OK"));
-}
+  if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
 
-if (!bmp.begin()) {
-Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
-}
-else{
-  Serial.println(F("BMP280 OK"));
-}
+  if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
  
 /* Default settings from datasheet. */
 bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, /* Operating Mode. */
@@ -1691,12 +1544,12 @@ void measuretodump(int ver){
   if(ver == 1){
     unsigned long endTime = bme.beginReading();
     if (endTime == 0) {
-      Serial.println(F("Failed to begin reading :("));
+      logV("sensor:BME680 begin err");
       return;
     }
-    
+
     if (!bme.endReading()) {
-      Serial.println(F("Failed to complete reading :("));
+      logV("sensor:BME680 read err");
       return;
     }
     tosdarg += "ntemp:";
@@ -1715,38 +1568,28 @@ void measuretodump(int ver){
     tosdarg += (rtc.getLocalEpoch());
     tosdarg += ";";
 
-    Serial.println(tosdarg);
+    logV("sensor:v1 " + tosdarg);
   }
 
   if(ver == 2){
-    tosdarg += "test:";
-    tosdarg += "ok";
-    tosdarg += ";";
-    tosdarg += "tsp:";
-    tosdarg += "okb";
-    tosdarg += ";";
-
-    Serial.println(tosdarg);
+    tosdarg += "test:ok;tsp:okb;";
+    logV("sensor:v2 " + tosdarg);
   }
   if(ver == 3){
   sensors_event_t humidity, temp;
-  aht.getEvent(&humidity, &temp);// populate temp and humidity objects with fresh data
+  aht.getEvent(&humidity, &temp);
   tosdarg += "ntemp:";
     tosdarg += temp.temperature;
-    tosdarg += ";";
-    tosdarg += "nhum:";
+    tosdarg += ";nhum:";
     tosdarg += humidity.relative_humidity;
-    tosdarg += ";";
-    tosdarg += "npres:";
+    tosdarg += ";npres:";
     tosdarg += (bmp.readPressure());
-    tosdarg += ";";
-    tosdarg += "ntime:";
+    tosdarg += ";ntime:";
     tosdarg += (rtc.getLocalEpoch());
     tosdarg += ";";
-
-    Serial.println(tosdarg);
+    logV("sensor:v3 " + tosdarg);
   }
-  
+
     delay(50);
     loraToSD();
     File myFile;
@@ -1759,7 +1602,7 @@ void measuretodump(int ver){
       myFile.close();
     }
     else{
-      Serial.println("PBfile");
+      logN("err:sd " + path);
     }
 
     sdToLora();
@@ -1820,6 +1663,7 @@ void readsd(bool allrecover){
       maintmode = getValue(sdtopar, ':', 6).toInt();
       stationgateway = getValue(sdtopar, ':', 7).toInt();
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
+      { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1830,7 +1674,7 @@ void readsd(bool allrecover){
         myFile.close();
       }
       sdtocron = getValue(sdtocron, '\n', 0);
-      Serial.print(sdtocron);
+      logD("cron:" + sdtocron);
       crontabString = sdtocron;
 
       initGaloisField();
@@ -1850,7 +1694,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      Serial.println("PB");
+      logN("err:sd map.cfg");
     }
 
     String varptosd;
@@ -1872,23 +1716,25 @@ void writetosd(){
     varptosd += ":";
     varptosd += TOGATE_COMMAND_TIMEOUT;
     varptosd += ":";
+    varptosd += serialLevel;
+    varptosd += ":";
     
     testFile = SD.open("/p.cfg", FILE_WRITE);
     if (testFile) {
       testFile.println(varptosd);
       testFile.close();
-    }  
+    }
     else{
-      Serial.println("PB");
+      logN("err:sd p.cfg");
     }
 
         testFile = SD.open("/crontab.cfg", FILE_WRITE);
     if (testFile) {
       testFile.println(crontabString);
       testFile.close();
-    }  
+    }
     else{
-      Serial.println("PB");
+      logN("err:sd crontab.cfg");
     }
 
     String varetosd;
@@ -1901,9 +1747,9 @@ void writetosd(){
     if (testFile) {
       testFile.println(varetosd);
       testFile.close();
-    }  
+    }
     else{
-      Serial.println("PB");
+      logN("err:sd e.cfg");
     }
     sdToLora();
 }
@@ -1913,7 +1759,7 @@ bool exportcache() {
   loraToSD();
   File fichier = SD.open("/togate.cache", FILE_READ);
   if (!fichier) {
-    Serial.println("Fichier introuvable.");
+    logV("cache:vide");
     prefs.putBool("incache", false);
     return false;
   }
@@ -1921,7 +1767,7 @@ bool exportcache() {
   uint32_t offset = prefs.getUInt("offset", 0);
   if (offset >= fichier.size()) {
     fichier.close();
-    Serial.println("Fin fichier cache");
+    logV("cache:fin");
     SD.remove("/togate.cache");
     prefs.remove("offset");
     prefs.putBool("incache", false);
@@ -1949,8 +1795,7 @@ bool exportcache() {
 
   if (!ligneTrouvee || index > 0) {
     ligne[index] = '\0';
-    Serial.print("Ligne lue : ");
-    Serial.println(ligne);
+    logD("cache:ligne " + String(ligne));
     prefs.putUInt("offset", offset);
     fichier.close();
     sdToLora();
@@ -1977,7 +1822,7 @@ void broadcastExportLine() {
 
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
-    Serial.println("[DIFF] tx.txt introuvable, arrêt diffusion");
+    logN("err:diff tx.txt introuvable");
     sdToLora();
     broadcastFileSending = false;
     broadcastMode = false;
@@ -2004,7 +1849,7 @@ void broadcastExportLine() {
     broadcastMode = false;
     broadcastEmitter = false;
     lastBrdfSeq = -1;
-    Serial.println("[DIFF] Diffusion terminée, reprise fonctionnement normal");
+    logV("diff:done");
     return;
   }
 
@@ -2042,8 +1887,7 @@ void broadcastExportLine() {
       lastBrdfSeq = brdfSeqCounter;  // Marquer comme déjà traité (ignore rétransmissions)
       brdfSeqCounter++;
       sendMessage(0, brdf, 0);  // Pas de réveil
-      Serial.print("[DIFF] Envoi seq=");
-      Serial.println(brdfSeqCounter - 1);
+      logD("diff:seq=" + String(brdfSeqCounter - 1));
     }
   } else {
     sdToLora();
@@ -2056,7 +1900,7 @@ bool exportfile() {
 
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
-    Serial.println("Fichier introuvable.");
+    logV("ftx:tx.txt vide");
     infilecache = false;
     sdToLora();
     return false;
@@ -2065,7 +1909,7 @@ bool exportfile() {
   uint32_t offsetfile = prefs.getUInt("offsetfile", 0);
   if (offsetfile >= fichier.size()) {
     fichier.close();
-    Serial.println("Fin fichier cache");
+    logV("ftx:fin");
     SD.remove("/tx.txt");
     prefs.remove("offsetfile");
     infilecache = false;
@@ -2080,8 +1924,7 @@ bool exportfile() {
     tempfend += ":";
     tempfend += remof;
     interpreter(tempfend);
-    Serial.print("Fermeture transmission fichier avec :");
-    Serial.println(filereceivientstation);
+    logN("ftx:ok dest:" + String(filereceivientstation) + " " + ftfpath);
     filereceivientstation = -1;
     isfdeson = false;
     return false;
@@ -2117,8 +1960,7 @@ bool exportfile() {
 
     String ligneStr = String(ligne);
     if (ligneStr.length() > 0) {
-      Serial.print("Ligne exportée : ");
-      Serial.println(ligneStr);
+      logD("ftx:ligne " + ligneStr);
       
       // Extraire l'ID de la commande (format identique à exportcache)
       String tempid = generateid();
@@ -2156,7 +1998,7 @@ void importfile(String file, String input){
     myFile.close();
   }
   else{
-    Serial.println("PBfile");
+    logN("err:sd write " + file);
   }
   sdToLora();
 }
@@ -2290,6 +2132,7 @@ void lssd(String path){
     return;
   }
 
+  if(serialLevel < LOG_NORMAL) { dir.close(); sdToLora(); delay(200); return; }
   File entry = dir.openNextFile();
   while(entry){
     Serial.print(entry.name());
@@ -2333,22 +2176,21 @@ bool doFirmwareUpdate() {
   loraToSD();
   File updateFile = SD.open(UPDATE_FILE);
   if (!updateFile) {
-    Serial.println("ERREUR: update.bin introuvable");
+    logN("err:ota firmware.bin introuvable");
     return false;
   }
 
   size_t updateSize = updateFile.size();
-  Serial.print("Taille update.bin = ");
-  Serial.println(updateSize);
+  logN("ota:start " + String(updateSize) + " oct");
 
   if (updateSize == 0) {
-    Serial.println("ERREUR: fichier vide");
+    logN("err:ota fichier vide");
     updateFile.close();
     return false;
   }
 
   if (!Update.begin(updateSize)) {  // vérifie la partition
-    Serial.println("ERREUR: Update.begin()");
+    logN("err:ota begin");
     Update.printError(Serial);
     updateFile.close();
     return false;
@@ -2356,8 +2198,6 @@ bool doFirmwareUpdate() {
 
   uint8_t buffer[BUF_SIZE];
   size_t written = 0;
-
-  Serial.println("Mise à jour en cours...");
 
   while (updateFile.available()) {
     size_t len = updateFile.read(buffer, BUF_SIZE);
@@ -2367,7 +2207,7 @@ bool doFirmwareUpdate() {
     written += w;
 
     if (w != len) {
-      Serial.println("ERREUR: ecriture partielle");
+      logN("err:ota ecriture");
       Update.printError(Serial);
       updateFile.close();
       Update.abort();
@@ -2378,18 +2218,17 @@ bool doFirmwareUpdate() {
   updateFile.close();
 
   if (!Update.end()) {
-    Serial.println("ERREUR: Update.end()");
+    logN("err:ota end");
     Update.printError(Serial);
     return false;
   }
 
   if (!Update.isFinished()) {
-    Serial.println("ERREUR: Update incomplet");
+    logN("err:ota incomplet");
     return false;
   }
 
-  Serial.printf("Mise a jour OK (%u octets ecrits)\n", (unsigned)written);
-  Serial.println("Redemarrage...");
+  logN("ota:ok " + String(written) + " oct, reboot...");
   delay(1000);
   ESP.restart();
   return true;
@@ -2413,8 +2252,6 @@ void setup() {
   
   clearEdges();
 
-  Serial.println("LoRa Duplex");
-
   LiteLoraConfig cfg = LiteLora::defaultConfig();
   cfg.csPin = csPin;
   cfg.dio0Pin = irqPin;
@@ -2422,7 +2259,7 @@ void setup() {
   cfg.bandwidth = 125000;
 
   if (!lora.begin(cfg)) {
-    Serial.println("LoRa init failed. Check your connections.");
+    Serial.println("err:lora init");
     while (true);
   }
 
@@ -2446,9 +2283,7 @@ void setup() {
     maintmode = true;
   }
 
-  Serial.println("LoRa init succeeded.");
-  Serial.println(localAddress);
-  Serial.println(millis());
+  logN("ok addr:" + String(localAddress));
   actiontimer = (millis()/1000);
   lora.receive();
 }
@@ -2464,22 +2299,22 @@ void loop() {
   if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
     sendMessage(1, "ping", 0);
     pingphase = 2;
-    Serial.println("ping phase 2");
+    logV("ping:2");
     tmps = (millis()/1000);
   }
-  if(pingphase == 2 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
+  if(pingphase == 2 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
     sendMessage(1, "ping", 0);
     pingphase = 3;
-    Serial.println("ping phase 3");
+    logV("ping:3");
     tmps = (millis()/1000);
   }
-  if(pingphase == 3 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
+  if(pingphase == 3 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
     pingphase = 0;
     String outgoingumap = exportEdgesContainingVertex(localAddress);
-    Serial.println(outgoingumap);
+    logD("umap:" + outgoingumap);
     addValue(getValue(outgoingumap, ':', 1));
     sendMessage(1, outgoingumap, 0);
-    Serial.println("fin ping");
+    logV("ping:done");
     fpingdel = millis() / 1000;
   }
 
@@ -2512,44 +2347,40 @@ void loop() {
     if ((nowSec - lastBroadcastRecv) > 300 || (nowSec < lastBroadcastRecv)) {
       broadcastMode = false;
       lastBrdfSeq = -1;
-      Serial.println("[DIFF] Timeout 5min: reprise fonctionnement normal");
+      logV("diff:timeout rx");
     }
   }
 
   if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
-      Serial.println("idle");
+      logV("idle");
       writetosd();
       lora.receive();
       delay(100);
       int nextwup = nextWakeup() - 5;
-      Serial.println("Going to sleep now");    
-      Serial.print("Next wakeup : ");  
-      Serial.println(nextwup);
+      logN("sleep:" + String(nextwup) + "s");
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
       esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
       gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
-      esp_deep_sleep_start();      
-      
-      Serial.println("not print");
+      esp_deep_sleep_start();
     }
   }
   else{
     if(stationstat == 1){
-      Serial.println("action");
+      logV("wake");
     }
     stationstat = 0;
-  }  
+  }
   if (filereceivientstation > -1 && (isfdeson == 0 || infilecache == 0) && (((millis()/1000) - filetxdelai) > filetxtimeout || filetxdelai > (millis()/1000))){
     filereceivientstation = -1;
-    Serial.println("Echec de trasnmission fichier (RX_STATION_NOT_RESPOND)");
+    logN("err:ftx timeout");
   }
   if (filesender > -1 && (((millis()/1000) - filedelai) > filetimeout || filedelai > (millis()/1000))){
     filesender = -1;
-    Serial.println("Echec de recepetion fichier (TIMEOUT)");
+    logN("err:frx timeout");
   }
   if(millis() >= (lastair + 15) || millis() < lastair){
     checkDelayedCommands();
@@ -2578,7 +2409,7 @@ void scheduleCommand(unsigned long delayMs, const String& command) {
     }
   }
 
-  Serial.println("Erreur : file de commandes pleine.");
+  logN("err:cmd queue pleine");
 }
 
 void checkDelayedCommands() {
@@ -2688,8 +2519,8 @@ void onReceive() {
     }
   }
     
-    if(getValue(incoming, ':', 0) == "ping"){    
-      Serial.println("Snr: " + String(lora.packetRssi()));
+    if(getValue(incoming, ':', 0) == "ping"){
+      logV("ping:rx rssi=" + String(lora.packetRssi()));
       String rping = "trsms:";
       rping += String(sender);
       rping += ":rpin:";
@@ -2700,14 +2531,14 @@ void onReceive() {
       if (!findValue(getValue(incoming, ':', 1))) {
         delay(1000-960);
         rtc.setTime(((getValue(incoming, ':', 2)).toInt())+1);
-        Serial.println(getValue(incoming, ':', 2));
+        logD("difh:rx set=" + getValue(incoming, ':', 2));
         addValue(getValue(incoming, ':', 1));
         delay(20*localAddress);
         String tosendtimestamp = "difh:";
         tosendtimestamp += getValue(incoming, ':', 1);
         tosendtimestamp += ":";
         tosendtimestamp += String(rtc.getLocalEpoch());
-        Serial.println(tosendtimestamp);
+        logD("difh:fwd " + tosendtimestamp);
         sendMessage(1, tosendtimestamp, 0);
       }
    }
@@ -2717,10 +2548,7 @@ void onReceive() {
       String bcokid = getValue(incoming, ':', 1);
       if (!findValue(bcokid)) {
         addValue(bcokid);
-        Serial.print("[BCOK] Station ");
-        Serial.print(getValue(incoming, ':', 2));
-        Serial.print(" a reussi la compilation de : ");
-        Serial.println(getValue(incoming, ':', 3));
+        logV("bcok:station " + getValue(incoming, ':', 2) + " compile ok " + getValue(incoming, ':', 3));
         // Rétransmission sans réveil avec délai proportionnel au rang
         String rbcok = "trsms:0:";
         rbcok += incoming;
@@ -2739,7 +2567,7 @@ void onReceive() {
           lastBrdfSeq = -1;
           // Nettoyage rx.txt et préparation réception (via interpreter, hors ISR)
           scheduleCommand(10, "brdinit");
-          Serial.println("[DIFF] Mode réception activé");
+          logV("diff:rx on " + broadcastPath);
         }
         // Rétransmission avec délai proportionnel au rang
         String rbrdl = "trsm:0:";
@@ -2838,7 +2666,7 @@ void executeCronTasks() {
 
     int lastSpace = cronEntry.lastIndexOf(' ');
     if (lastSpace == -1 || lastSpace == 0 || lastSpace == cronEntry.length() - 1) {
-      Serial.print("[Cron Parse Error] Invalid format near: "); Serial.println(cronEntry.substring(0, 20) + "...");
+      logV("cron:err format " + cronEntry.substring(0, 20));
       start = nextStart;
       continue;
     }
@@ -2870,9 +2698,7 @@ void executeCronTasks() {
     }
 
     if (fieldCount != 5) {
-      Serial.print("[Cron Parse Error] Expected 5 time fields, found ");
-      Serial.print(fieldCount);
-      Serial.print(" in: "); Serial.println(timeFields);
+      logV("cron:err champs=" + String(fieldCount) + " " + timeFields);
       start = nextStart;
       continue;
     }
@@ -2980,44 +2806,41 @@ int nextWakeup() {
 void changepval(String parn, String parv){
   if(parn == "stationgateway"){
     stationgateway = parv.toInt();
-    Serial.print("stationgateway:");
-    Serial.println(stationgateway);
+    logN("parm:stationgateway=" + String(stationgateway));
     return;
   }
   if(parn == "MAX_PING_AGE"){
     MAX_PING_AGE = parv.toInt();
-    Serial.print("MAX_PING_AGE:");
-    Serial.println(MAX_PING_AGE);
+    logN("parm:MAX_PING_AGE=" + String(MAX_PING_AGE));
   }
   if(parn == "starttimeout"){
     starttimeout = parv.toInt();
-    Serial.print("starttimeout:");
-    Serial.println(starttimeout);
+    logN("parm:starttimeout=" + String(starttimeout));
   }
   if(parn == "localAddress"){
     localAddress = parv.toInt();
-    Serial.print("localAddress:");
-    Serial.println(localAddress);
+    logN("parm:localAddress=" + String(localAddress));
   }
   if(parn == "DELAY"){
     DELAY = parv.toInt();
-    Serial.print("DELAY:");
-    Serial.println(DELAY);
+    logN("parm:DELAY=" + String(DELAY));
   }
   if(parn == "MAX_ENTRY_AGE"){
     MAX_ENTRY_AGE = parv.toInt();
-    Serial.print("MAX_ENTRY_AGE:");
-    Serial.println(MAX_ENTRY_AGE);
+    logN("parm:MAX_ENTRY_AGE=" + String(MAX_ENTRY_AGE));
   }
   if(parn == "actiontimerdel"){
     actiontimerdel = parv.toInt();
-    Serial.print("actiontimerdel:");
-    Serial.println(actiontimerdel);
+    logN("parm:actiontimerdel=" + String(actiontimerdel));
   }
   if(parn == "TOGATE_COMMAND_TIMEOUT"){
     TOGATE_COMMAND_TIMEOUT = parv.toInt();
-    Serial.print("TOGATE_COMMAND_TIMEOUT:");
-    Serial.println(TOGATE_COMMAND_TIMEOUT);
+    logN("parm:TOGATE_COMMAND_TIMEOUT=" + String(TOGATE_COMMAND_TIMEOUT));
+  }
+  if(parn == "serialLevel"){
+    int sl = parv.toInt();
+    if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
+    Serial.println("parm:serialLevel=" + String(serialLevel));
   }
 }
 
@@ -3032,7 +2855,7 @@ void interpreter(String msg){
      writetosd();
   }  
   if(cmd == "data"){
-    Serial.println(msg.substring(5, msg.length()));
+    logN(msg.substring(5, msg.length()));
   }
     if(cmd == "trsm"){
      delay(10);
@@ -3042,8 +2865,8 @@ void interpreter(String msg){
       delay(10);
      sendMessage(0, msg.substring(6+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt());
   }
-    if(cmd == "ping"){    
-      Serial.println("Snr: " + String(lora.packetRssi()));
+    if(cmd == "ping"){
+      logV("ping:rx rssi=" + String(lora.packetRssi()));
       String rping = "trsms:";
       rping += String(sender);
       rping += ":rpin:";
@@ -3051,19 +2874,12 @@ void interpreter(String msg){
       scheduleCommand(50, rping);
     }
     if(cmd == "rpin"){
-      Serial.println("-----------------------------------------");
-      Serial.print("ping : ");
-      Serial.println(sender);
-      Serial.print("TX : ");
-      Serial.println(msg.substring(5, msg.length()));
-      Serial.print("RX : ");
-      Serial.println(lora.packetRssi());
-      Serial.print("GLOB : ");
-      int glob = ((lora.packetRssi())+((msg.substring(5, msg.length())).toInt()))/2;
-      glob = abs(glob);
-      Serial.println(glob);
+      int glob = abs(((lora.packetRssi())+((msg.substring(5, msg.length())).toInt()))/2);
+      if(serialLevel >= LOG_DEBUG)
+        logD("rpin:" + String(sender) + " tx=" + msg.substring(5,msg.length()) + " rx=" + String(lora.packetRssi()) + " glob=" + String(glob));
+      else
+        logV("rpin:" + String(sender) + " glob=" + String(glob));
       addOrUpdateEdge(localAddress, sender, glob);
-      Serial.println("-----------------------------------------");
       removePingEntryByNbtoping(sender);
     }
     if (cmd == "umap") {
@@ -3089,16 +2905,13 @@ void interpreter(String msg){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
       pingphase = 1;
-      Serial.println("ping phase 1");
+      logV("ping:1");
       tmps = (millis()/1000);
     }  
     if(cmd == "dijk"){
       if(getValue(msg, ':', 2).toInt() != localAddress){
         String tempinload = (msg.substring((5+9+(getValue(msg, ':', 1).length())+(getValue(msg, ':', 2).length())+(getValue(msg, ':', 3).length())+3), msg.length()));
-        Serial.println(getValue(msg, ':', 3));
-        Serial.println(tempinload.length());
-        Serial.println(getValue(msg, ':', 4));
-        Serial.println(tempinload);
+        logD("dijk:rx id=" + getValue(msg, ':', 4) + " len=" + String(tempinload.length()) + "/" + getValue(msg, ':', 3));
         String rxok = "trsms:";
         rxok += getValue(msg, ':', 2);
         rxok += ":rxok:";
@@ -3123,9 +2936,9 @@ void interpreter(String msg){
         msgrt += getValue(msg, ':', 4);
         msgrt += ":";
         msgrt += msg.substring((5+9+(getValue(msg, ':', 1).length())+(getValue(msg, ':', 2).length())+(getValue(msg, ':', 3).length())+3), msg.length());
-        Serial.println(msgrt);
+        logD("dijk:fwd " + msgrt);
         if(dijkstra(localAddress, getValue(msg, ':', 1).toInt(), msgrt)){
-          Serial.println("trouvé");
+          logD("dijk:ok ->" + getValue(msg, ':', 1));
           addEntry(getValue(msg, ':', 4), 1, msgrt);
         }
       }
@@ -3146,18 +2959,15 @@ void interpreter(String msg){
           }
         } 
       if(good == true){
-        Serial.println(tmapCommand);
+        logN(tmapCommand);
       }
-      r++;     
+      r++;
       }
-      
+
     }
     if(cmd == "load"){
       String tempinload = msg.substring((5+9+(getValue(msg, ':', 1).length())+(getValue(msg, ':', 2).length())+2), msg.length());
-      Serial.println(getValue(msg, ':', 2));
-      Serial.println(tempinload.length());
-      Serial.println(getValue(msg, ':', 3));
-      Serial.println(tempinload);
+      logD("load:id=" + getValue(msg, ':', 3) + " len=" + String(tempinload.length()) + "/" + getValue(msg, ':', 2));
       String rxok = "send:";
       rxok += getValue(msg, ':', 1);
       rxok += ":arok:";
@@ -3170,18 +2980,12 @@ void interpreter(String msg){
       }
     }
     if(cmd == "arok"){
-      Serial.print("Message ");
-      Serial.print(getValue(msg, ':', 1));
-      Serial.print(" bien reçu par ");
-      Serial.println(getValue(msg, ':', 2));
+      logN("ack:id=" + getValue(msg, ':', 1) + " from:" + getValue(msg, ':', 2));
       togateRemoveById(getValue(msg, ':', 1).toInt());
       togateRemoveByIdFile(getValue(msg, ':', 1).toInt());
     }
     if(cmd == "rxok"){
-      Serial.print("Message ");
-      Serial.print(getValue(msg, ':', 1));
-      Serial.print(" bien reçu par ");
-      Serial.println(getValue(msg, ':', 2));
+      logN("ack:id=" + getValue(msg, ':', 1) + " from:" + getValue(msg, ':', 2));
       removeEntryByID(getValue(msg, ':', 1));
     }
     if(cmd == "trsp"){
@@ -3196,14 +3000,14 @@ void interpreter(String msg){
       load += tempid;
       load += ":";
       load += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
-      Serial.println(load);
+      logD("trsp:" + load);
       interpreter(load);
     }
     if(cmd == "send"){
       if((msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length())).length() >= 225){
         String dijk;
         dijk += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
-        Serial.println(dijk);
+        logD("send:large ->" + getValue(msg, ':', 1));
         large(dijk, getValue(msg, ':', 1).toInt());
       }
       else{
@@ -3218,7 +3022,7 @@ void interpreter(String msg){
         dijk += tempid;
         dijk += ":";
         dijk += msg.substring(5+((getValue(msg, ':', 1)).length()+1), msg.length()), (getValue(msg, ':', 1)).toInt();
-        Serial.println(dijk);
+        logD("send:dijk " + dijk);
         interpreter(dijk);        
       }
     }
@@ -3239,8 +3043,8 @@ void interpreter(String msg){
         } 
       if(good == true){
         delay(50);
-        sendMessage(0, tmapCommand, sender);  
-        Serial.println(tmapCommand);
+        sendMessage(0, tmapCommand, sender);
+        logD("gmap:tx " + tmapCommand);
       }
       r++;     
       }
@@ -3261,27 +3065,25 @@ void interpreter(String msg){
       }
     }
     if(cmd == "time"){
-      Serial.println(rtc.getTime("%A, %B %d %Y %H:%M:%S"));
+      logN(rtc.getTime("%A, %B %d %Y %H:%M:%S"));
     }
     if(cmd == "seth"){
       unsigned long delaygeth = ((((millis() - timegeth) - 50) / 2));
-      Serial.print("delay : ");
-      Serial.println(delaygeth);
+      logD("seth:delay=" + String(delaygeth));
       delay(1000 - delaygeth);
       rtc.setTime(((getValue(msg, ':', 1)).toInt()) + 1);
-      Serial.println(getValue(msg, ':', 1));
+      logV("seth:set=" + getValue(msg, ':', 1));
       if(startstat == 7){
         startstat = 8;
-        Serial.println("Fin procedure de demarrage");        
+        logN("start:ok");
       }
     }
     if(cmd == "geth"){
       delay(50);
       String tosendtimestamp = "seth:";
       tosendtimestamp += String(rtc.getLocalEpoch());
-      Serial.println(tosendtimestamp);
-      Serial.println(sender);
-      sendMessage(0, tosendtimestamp, sender);      
+      logD("geth:rep " + tosendtimestamp + " ->" + String(sender));
+      sendMessage(0, tosendtimestamp, sender);
     }
     if(cmd == "acth"){
       acth();
@@ -3293,20 +3095,20 @@ void interpreter(String msg){
       startstat = 1;
     }
     if(cmd == "sho"){
-      Serial.println(maintmode);
+      logN("maint:" + String(maintmode));
     }
     if(cmd == "maint"){
       maintmode = true;
-      Serial.println("maintenace");
+      logN("mode:maint");
     }
     if(cmd == "norm"){
       maintmode = false;
-      Serial.println("nominal");
+      logN("mode:nom");
     }
     if(cmd == "stam"){
       rtc.setTime((getValue(msg, ':', 1)).toInt());
       startstat = 8;
-      Serial.println("Fin procedure de demarrage");
+      logN("start:ok");
     }
     if(cmd == "fdih"){
       delay(10);
@@ -3317,19 +3119,19 @@ void interpreter(String msg){
       if (!findValue(getValue(msg, ':', 1))) {
         delay(40);
         rtc.setTime(((getValue(msg, ':', 2)).toInt())+1);
-        Serial.println(getValue(msg, ':', 2));
+        logV("difh:set=" + getValue(msg, ':', 2));
         addValue(getValue(msg, ':', 1));
         delay(20*localAddress);
         String tosendtimestamp = "difh:";
         tosendtimestamp += getValue(msg, ':', 1);
         tosendtimestamp += ":";
         tosendtimestamp += String(rtc.getLocalEpoch());
-        Serial.println(tosendtimestamp);
-        sendMessage(1, tosendtimestamp, 0);        
+        logD("difh:fwd " + tosendtimestamp);
+        sendMessage(1, tosendtimestamp, 0);
       }
    }
    if(cmd == "gate"){
-      Serial.println(stationgateway);
+      logN("gate:" + String(stationgateway));
    }
    if(cmd == "gdfh"){
     String tempid = generateid();
@@ -3338,11 +3140,11 @@ void interpreter(String msg){
     tosenddifh += ":";
     tosenddifh += String(rtc.getLocalEpoch());
     sendMessage(1, tosenddifh, 0);
-    Serial.println(tosenddifh);
+    logD("gdfh:" + tosenddifh);
     }
     if(cmd == "dexp"){
       String togate = exportdata(getValue(msg, ':', 1));
-      Serial.println(togate);
+      logD("dexp:" + togate);
       String tempid = generateid();
       String load = "send:";
       load += stationgateway;
@@ -3354,7 +3156,7 @@ void interpreter(String msg){
       load += tempid;
       load += ":";
       load += togate;
-      Serial.println(load);
+      logD("dexp:load " + load);
       togateAddCommand(tempid.toInt(), load);
       interpreter(load);
     }
@@ -3364,6 +3166,16 @@ void interpreter(String msg){
     if(cmd == "parm"){
       changepval(getValue(msg, ':', 1), getValue(msg, ':', 2));
     }
+    if(cmd == "slvl"){
+      String arg = getValue(msg, ':', 1);
+      if(arg == "none")    serialLevel = LOG_NONE;
+      else if(arg == "normal")  serialLevel = LOG_NORMAL;
+      else if(arg == "verbose") serialLevel = LOG_VERBOSE;
+      else if(arg == "debug")   serialLevel = LOG_DEBUG;
+      else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      Serial.println("slvl:" + String(serialLevel));
+      writetosd();
+    }
     if(cmd == "cout"){
       exportcache();
     }
@@ -3371,17 +3183,12 @@ void interpreter(String msg){
       clearEdges();
     }
     if(cmd == "cachestate"){
-      Serial.print("incache:");
-      Serial.println(prefs.getBool("incache", 0));
-      Serial.print("isgateonline:");
-      Serial.println(prefs.getBool("isgateonline", 0));
-      Serial.print("togateCount:");
-      Serial.println(togateCount);
+      logN("cache:" + String(prefs.getBool("incache",0)) + " gate:" + String(prefs.getBool("isgateonline",0)) + " q:" + String(togateCount));
     }
     if(cmd == "adrc"){
     int del = getValue(msg, ':', 1).toInt();
     String cmd = getValue(msg, ':', 2);
-    Serial.println(del);
+    logD("adrc:" + String(del) + "ms cmd=" + cmd);
     scheduleCommand(del, cmd);
     }
     if(cmd == "startfile"){
@@ -3390,27 +3197,22 @@ void interpreter(String msg){
       isfdeson = true;
       prefs.putUInt("offsetfile", 0);
       nbtogatefailfile = 0;
-      Serial.println("Export fichier tx.txt démarré");
+      logN("ftx:start dest:" + String(filereceivientstation));
     }
     if(cmd == "filestate"){
-      Serial.print("infilecache:");
-      Serial.println(infilecache);
-      Serial.print("isfdeson:");
-      Serial.println(isfdeson);
-      Serial.print("togateCountFile:");
-      Serial.println(togateCountFile);
+      logN("ftx:cache=" + String(infilecache) + " on=" + String(isfdeson) + " q=" + String(togateCountFile));
     }
     if(cmd == "stopfile"){
       isfdeson = false;
       infilecache = false;
-      Serial.println("Export fichier tx.txt arrêté");
+      logN("ftx:stop");
     }
     if(cmd == "expfile"){
       exportfile();
-    }  
+    }
     if(cmd == "file"){
       filedelai = (millis()/1000);
-      Serial.println(msg.substring(5, msg.length()));
+      logD("file:rx " + msg.substring(5, msg.length()));
       importfile("/rx.txt", msg.substring(5, msg.length()));
     }
     if(cmd == "stft"){
@@ -3433,8 +3235,7 @@ void interpreter(String msg){
       if(filereceivientstation == -1 && filesender == -1 && !broadcastMode){
         filedelai = (millis()/1000);
         filesender = getValue(msg, ':', 1).toInt();
-        Serial.print("Récéption file de : ");
-        Serial.println(filesender);
+        logN("frx:start from:" + String(filesender));
         remfromsd("/rx.txt");
         String temprfok = "send:";
         temprfok += filesender;
@@ -3445,21 +3246,17 @@ void interpreter(String msg){
     }
     if(cmd == "rfok"){
       if(getValue(msg, ':', 1).toInt() == filereceivientstation && isfdeson == false){
-        Serial.println("Connexion station rx file OK");
+        logV("ftx:rx prêt");
         isfdeson = true;
         prefs.putUInt("offsetfile", 0);
         nbtogatefailfile = 0;
-        Serial.println("Export fichier tx.txt démarré");
         ltgdelfile = (millis()/1000);
       }
     }
     
     if(cmd == "fend"){
       if(getValue(msg, ':', 1).toInt() == filesender){
-        Serial.print("Fermeture récéption fichier avec :");
-        Serial.println(filesender);
-        Serial.print("COMPILE : ");
-        Serial.println(getValue(msg, ':', 2)); 
+        logV("frx:fin from:" + String(filesender) + " -> " + getValue(msg, ':', 2));
         String tempfntc = "compileFile:";
         tempfntc += getValue(msg, ':', 2);
         tempfntc += ":";
@@ -3474,16 +3271,10 @@ void interpreter(String msg){
       compileFile(getValue(msg, ':', 1), getValue(msg, ':', 2).toInt(), getValue(msg, ':', 3).toInt());      
     }
     if(cmd == "feok"){
-      Serial.print("Fichier : ");
-      Serial.print(getValue(msg, ':', 2));
-      Serial.print(" bien reçu par : ");
-      Serial.println(getValue(msg, ':', 1));
+      logN("feok:" + getValue(msg, ':', 2) + " from:" + getValue(msg, ':', 1));
       if(getValue(msg, ':', 3) == "1"){
-        Serial.println("suppresion");
+        logD("feok:rm " + getValue(msg, ':', 2));
         remfromsd(getValue(msg, ':', 2));
-      }
-      else{
-        Serial.println("fichier origine conserver");
       }
     }
     if(cmd == "reboot"){
@@ -3496,40 +3287,34 @@ void interpreter(String msg){
       delay(500);
       doFirmwareUpdate();
     }
-    if(cmd == "version"){  
-      Serial.print("Version firmware : ");
-      Serial.println(FIRMWARE_VERSION);
+    if(cmd == "version"){
+      logN("ver:" + FIRMWARE_VERSION);
     }
     if(cmd == "mkdir"){
-      Serial.print(getValue(msg, ':', 1));
-      if(mkdirsd(getValue(msg, ':', 1))){
-        Serial.println(" crée avec succès.");
-      }
-      else{
-        Serial.println(" non crée.");
-      }
+      String path = getValue(msg, ':', 1);
+      logN("mkdir:" + path + (mkdirsd(path) ? " ok" : " err"));
     }
     if(cmd == "rmdir"){
       String path = getValue(msg, ':', 1);
-      Serial.println(path + (rmdirsd(path) ? " ok" : " err"));
+      logN("rmdir:" + path + (rmdirsd(path) ? " ok" : " err"));
     }
     if(cmd == "rm"){
       String path = getValue(msg, ':', 1);
-      Serial.println(path + (remfromsd(path) ? " ok" : " err"));
+      logN("rm:" + path + (remfromsd(path) ? " ok" : " err"));
     }
     if(cmd == "cp"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      Serial.println(src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
+      logN("cp:" + src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "mv"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      Serial.println(src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
+      logN("mv:" + src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
     }
     if(cmd == "ls"){
       String path = getValue(msg, ':', 1);
@@ -3549,8 +3334,7 @@ void interpreter(String msg){
       bcok += getValue(msg, ':', 1);  // chemin du fichier compilé
       addValue(tempid);  // Éviter de retraiter notre propre bcok si reçu en écho
       sendMessage(0, bcok, 0);  // Diffusion sans réveil
-      Serial.print("[BCOK] Diffusion réussite compilation : ");
-      Serial.println(getValue(msg, ':', 1));
+      logV("bcok:" + getValue(msg, ':', 1));
     }
 
     // ================================================================
@@ -3565,28 +3349,25 @@ void interpreter(String msg){
         lastBroadcastRecv = millis() / 1000;
         lastBrdfSeq = -1;
         brdfSeqCounter = 0;
-        Serial.print("[DIFF] Démarrage diffusion : ");
-        Serial.println(broadcastPath);
+        logV("diff:start " + broadcastPath);
         if (parseFile(broadcastPath)) {
           prefs.putUInt("brdoffset", 0);
-          // Générer un ID unique pour le brdl
           String tempid = generateid();
           String brdl = "brdl:";
           brdl += tempid;
           brdl += ":";
           brdl += broadcastPath;
-          addValue(tempid);  // Éviter de retraiter notre propre brdl en réception
-          sendMessage(1, brdl, 0);  // Réveil + diffusion vers tout le réseau
-          Serial.println("[DIFF] Signal brdl envoyé, attente propagation...");
-          // Démarrer l'envoi des lignes après 5s (laisser le réseau passer en mode réception)
+          addValue(tempid);
+          sendMessage(1, brdl, 0);
+          logD("diff:brdl envoyé");
           scheduleCommand(5000, "brdfstart");
         } else {
-          Serial.println("[DIFF] Erreur: impossible de parser le fichier");
+          logN("err:diff parse echec");
           broadcastMode = false;
           broadcastEmitter = false;
         }
       } else {
-        Serial.println("[DIFF] Impossible: diffusion ou transfert déjà en cours");
+        logN("err:diff en cours");
       }
     }
 
@@ -3594,15 +3375,14 @@ void interpreter(String msg){
     if (cmd == "brdfstart") {
       if (broadcastEmitter) {
         broadcastFileSending = true;
-        lastBrdfSendMs = 0;  // Déclenche envoi immédiat au prochain passage dans loop()
-        Serial.println("[DIFF] Début envoi lignes brdf");
+        lastBrdfSendMs = 0;
+        logV("diff:envoi lignes");
       }
     }
 
-    // Initialisation réception : suppression de rx.txt (interne, programmé via scheduleCommand)
     if (cmd == "brdinit") {
       remfromsd("/rx.txt");
-      Serial.println("[DIFF] rx.txt supprimé, prêt pour réception diffusion");
+      logD("diff:rx init");
     }
 
     // Réception d'une ligne de données diffusée : brdf:SEQ:LINEDATA
@@ -3626,12 +3406,11 @@ void interpreter(String msg){
     if (cmd == "brde") {
       if (broadcastMode && !broadcastEmitter) {
         String filePath = getValue(msg, ':', 2);
-        Serial.print("[DIFF] Fin diffusion reçue, compilation vers : ");
-        Serial.println(filePath);
+        logV("diff:rx fin -> " + filePath);
         broadcastMode = false;
         lastBrdfSeq = -1;
         compileFile(filePath, -1, 0);  // origin=-1 : pas de feok à envoyer
-        Serial.println("[DIFF] Reprise fonctionnement normal");
+        logV("diff:rx done");
       }
     }
 }
