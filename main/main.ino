@@ -1356,7 +1356,7 @@ void startprocedure(){
    logV("start:3 nearest=" + String(nearestforstart));
    if(nearestforstart == -1){
     startstat = 9;
-    logN("err:start echec (pas de voisin)");
+    logN("[ERREUR] Démarrage échoué : aucun voisin détecté après le ping");
     return;
    }
    else{
@@ -1364,7 +1364,7 @@ void startprocedure(){
     starttime = millis() + starttimeout;
     startstat = 4;
     starttry = 1;
-    logN("start: récup. carte depuis " + String(nearestforstart));
+    logN("[DÉMARRAGE] Récupération de la carte réseau auprès du noeud #" + String(nearestforstart) + "...");
    logV("start:4 gmap->" + String(nearestforstart));
    }
   }
@@ -1389,7 +1389,7 @@ void startprocedure(){
    logV("start:6 nearest=" + String(nearestforstart));
    if(nearestforstart == -1){
     startstat = 9;
-    logN("err:start echec (pas de voisin apres map)");
+    logN("[ERREUR] Démarrage échoué : aucun voisin trouvé après réception de la carte réseau");
     return;
    }
    else{
@@ -1398,7 +1398,7 @@ void startprocedure(){
     starttime = millis() + starttimeout;
     startstat = 7;
     starttry = 1;
-   logN("start: synchro heure depuis " + String(nearestforstart));
+   logN("[DÉMARRAGE] Synchronisation de l'heure avec le noeud #" + String(nearestforstart) + "...");
    logV("start:7 geth->" + String(nearestforstart));
    }
   }
@@ -1448,7 +1448,7 @@ String exportdata(String ver){
       myFile.close();
     }
     else{
-      logN("err:sd datadump");
+      logN("[ERREUR SD] Impossible d'écrire le fichier de mesures capteur");
     }
 
     sdToLora();
@@ -1604,7 +1604,7 @@ void measuretodump(int ver){
       myFile.close();
     }
     else{
-      logN("err:sd " + path);
+      logN("[ERREUR SD] Impossible d'écrire dans " + path);
     }
 
     sdToLora();
@@ -1696,7 +1696,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("err:sd map.cfg");
+      logN("[ERREUR SD] Impossible d'écrire /map.cfg (carte réseau)");
     }
 
     String varptosd;
@@ -1727,7 +1727,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("err:sd p.cfg");
+      logN("[ERREUR SD] Impossible d'écrire /p.cfg (paramètres)");
     }
 
         testFile = SD.open("/crontab.cfg", FILE_WRITE);
@@ -1736,7 +1736,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("err:sd crontab.cfg");
+      logN("[ERREUR SD] Impossible d'écrire /crontab.cfg");
     }
 
     String varetosd;
@@ -1751,7 +1751,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("err:sd e.cfg");
+      logN("[ERREUR SD] Impossible d'écrire /e.cfg (état)");
     }
     sdToLora();
 }
@@ -1824,7 +1824,7 @@ void broadcastExportLine() {
 
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
-    logN("err:diff tx.txt introuvable");
+    logN("[ERREUR] Diffusion réseau interrompue : /tx.txt introuvable");
     sdToLora();
     broadcastFileSending = false;
     broadcastMode = false;
@@ -1926,7 +1926,7 @@ bool exportfile() {
     tempfend += ":";
     tempfend += remof;
     interpreter(tempfend);
-    logN("ftx:ok " + ftfpath + " -> dest " + String(filereceivientstation) + ", attente confirmation...");
+    logN("[FICHIER TX] Transfert de " + ftfpath + " terminé, attente de confirmation du noeud #" + String(filereceivientstation) + "...");
     filereceivientstation = -1;
     isfdeson = false;
     return false;
@@ -2000,7 +2000,7 @@ void importfile(String file, String input){
     myFile.close();
   }
   else{
-    logN("err:sd write " + file);
+    logN("[ERREUR SD] Écriture impossible dans " + file);
   }
   sdToLora();
 }
@@ -2178,21 +2178,21 @@ bool doFirmwareUpdate() {
   loraToSD();
   File updateFile = SD.open(UPDATE_FILE);
   if (!updateFile) {
-    logN("err:ota firmware.bin introuvable");
+    logN("[ERREUR MÀJU] Fichier firmware introuvable sur la carte SD");
     return false;
   }
 
   size_t updateSize = updateFile.size();
-  logN("ota:start " + String(updateSize) + " oct");
+  logN("[MISE À JOUR] Démarrage de la mise à jour, fichier de " + String(updateSize) + " octets...");
 
   if (updateSize == 0) {
-    logN("err:ota fichier vide");
+    logN("[ERREUR MÀJU] Le fichier firmware est vide");
     updateFile.close();
     return false;
   }
 
   if (!Update.begin(updateSize)) {  // vérifie la partition
-    logN("err:ota begin");
+    logN("[ERREUR MÀJU] Impossible de démarrer la mise à jour (partition insuffisante ?)");
     Update.printError(Serial);
     updateFile.close();
     return false;
@@ -2209,7 +2209,7 @@ bool doFirmwareUpdate() {
     written += w;
 
     if (w != len) {
-      logN("err:ota ecriture");
+      logN("[ERREUR MÀJU] Écriture partielle du firmware, mise à jour annulée");
       Update.printError(Serial);
       updateFile.close();
       Update.abort();
@@ -2220,17 +2220,17 @@ bool doFirmwareUpdate() {
   updateFile.close();
 
   if (!Update.end()) {
-    logN("err:ota end");
+    logN("[ERREUR MÀJU] Erreur lors de la finalisation de la mise à jour");
     Update.printError(Serial);
     return false;
   }
 
   if (!Update.isFinished()) {
-    logN("err:ota incomplet");
+    logN("[ERREUR MÀJU] Mise à jour incomplète, redémarrage annulé");
     return false;
   }
 
-  logN("ota:ok " + String(written) + " oct, reboot...");
+  logN("[MISE À JOUR] Succès — " + String(written) + " octets écrits, redémarrage dans 1s...");
   delay(1000);
   ESP.restart();
   return true;
@@ -2285,7 +2285,7 @@ void setup() {
     maintmode = true;
   }
 
-  logN("boot:ok  addr=" + String(localAddress) + "  fw=" + FIRMWARE_VERSION);
+  logN("[OK] Noeud #" + String(localAddress) + " démarré — firmware " + FIRMWARE_VERSION);
   actiontimer = (millis()/1000);
   lora.receive();
 }
@@ -2316,7 +2316,7 @@ void loop() {
     logD("umap:" + outgoingumap);
     addValue(getValue(outgoingumap, ':', 1));
     sendMessage(1, outgoingumap, 0);
-    logN("ping:done " + String(numEdges) + " voisin(s)");
+    logN("[PING] Découverte terminée — " + String(numEdges) + " lien(s) dans la table de routage");
     fpingdel = millis() / 1000;
   }
 
@@ -2356,12 +2356,12 @@ void loop() {
   if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
     if(stationstat == 0 && maintmode == false){      
       stationstat = 1;
-      logN("idle: mise en veille dans quelques instants");
+      logN("[VEILLE] Aucune activité détectée, mise en veille imminente...");
       writetosd();
       lora.receive();
       delay(100);
       int nextwup = nextWakeup() - 5;
-      logN("sleep:" + String(nextwup) + "s (réveil dans " + String(nextwup/60) + "min)");
+      logN("[VEILLE] Entrée en sommeil profond — réveil dans " + String(nextwup/60) + " min (" + String(nextwup) + "s)");
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
@@ -2372,17 +2372,17 @@ void loop() {
   }
   else{
     if(stationstat == 1){
-      logN("wake: reprise activité");
+      logN("[RÉVEIL] Reprise de l'activité après la veille");
     }
     stationstat = 0;
   }
   if (filereceivientstation > -1 && (isfdeson == 0 || infilecache == 0) && (((millis()/1000) - filetxdelai) > filetxtimeout || filetxdelai > (millis()/1000))){
     filereceivientstation = -1;
-    logN("err:ftx timeout");
+    logN("[ERREUR] Transfert fichier échoué : le noeud destinataire ne répond plus");
   }
   if (filesender > -1 && (((millis()/1000) - filedelai) > filetimeout || filedelai > (millis()/1000))){
     filesender = -1;
-    logN("err:frx timeout");
+    logN("[ERREUR] Réception fichier interrompue : timeout dépassé, transfert annulé");
   }
   if(millis() >= (lastair + 15) || millis() < lastair){
     checkDelayedCommands();
@@ -2411,7 +2411,7 @@ void scheduleCommand(unsigned long delayMs, const String& command) {
     }
   }
 
-  logN("err:cmd queue pleine");
+  logN("[ERREUR] File de commandes interne pleine, commande ignorée");
 }
 
 void checkDelayedCommands() {
@@ -2808,36 +2808,36 @@ int nextWakeup() {
 void changepval(String parn, String parv){
   if(parn == "stationgateway"){
     stationgateway = parv.toInt();
-    logN("parm:stationgateway=" + String(stationgateway));
+    logN("[CONFIG] Paramètre 'stationgateway' mis à jour : " + String(stationgateway));
     return;
   }
   if(parn == "MAX_PING_AGE"){
     MAX_PING_AGE = parv.toInt();
-    logN("parm:MAX_PING_AGE=" + String(MAX_PING_AGE));
+    logN("[CONFIG] Paramètre 'MAX_PING_AGE' mis à jour : " + String(MAX_PING_AGE) + " ms");
   }
   if(parn == "starttimeout"){
     starttimeout = parv.toInt();
-    logN("parm:starttimeout=" + String(starttimeout));
+    logN("[CONFIG] Paramètre 'starttimeout' mis à jour : " + String(starttimeout) + " ms");
   }
   if(parn == "localAddress"){
     localAddress = parv.toInt();
-    logN("parm:localAddress=" + String(localAddress));
+    logN("[CONFIG] Paramètre 'localAddress' mis à jour : " + String(localAddress));
   }
   if(parn == "DELAY"){
     DELAY = parv.toInt();
-    logN("parm:DELAY=" + String(DELAY));
+    logN("[CONFIG] Paramètre 'DELAY' (déduplication) mis à jour : " + String(DELAY) + " ms");
   }
   if(parn == "MAX_ENTRY_AGE"){
     MAX_ENTRY_AGE = parv.toInt();
-    logN("parm:MAX_ENTRY_AGE=" + String(MAX_ENTRY_AGE));
+    logN("[CONFIG] Paramètre 'MAX_ENTRY_AGE' mis à jour : " + String(MAX_ENTRY_AGE) + " ms");
   }
   if(parn == "actiontimerdel"){
     actiontimerdel = parv.toInt();
-    logN("parm:actiontimerdel=" + String(actiontimerdel));
+    logN("[CONFIG] Délai d'inactivité avant veille mis à jour : " + String(actiontimerdel) + " s");
   }
   if(parn == "TOGATE_COMMAND_TIMEOUT"){
     TOGATE_COMMAND_TIMEOUT = parv.toInt();
-    logN("parm:TOGATE_COMMAND_TIMEOUT=" + String(TOGATE_COMMAND_TIMEOUT));
+    logN("[CONFIG] Timeout gateway mis à jour : " + String(TOGATE_COMMAND_TIMEOUT) + " ms");
   }
   if(parn == "serialLevel"){
     int sl = parv.toInt();
@@ -2907,7 +2907,7 @@ void interpreter(String msg){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
       pingphase = 1;
-      logN("ping:start");
+      logN("[PING] Envoi des sondes de découverte réseau...");
       tmps = (millis()/1000);
     }  
     if(cmd == "dijk"){
@@ -2982,7 +2982,7 @@ void interpreter(String msg){
       }
     }
     if(cmd == "arok"){
-      logN("msg:ok id=" + getValue(msg, ':', 1) + " livré à " + getValue(msg, ':', 2));
+      logN("[MESSAGE] Accusé de réception — message #" + getValue(msg, ':', 1) + " bien livré au noeud #" + getValue(msg, ':', 2));
       togateRemoveById(getValue(msg, ':', 1).toInt());
       togateRemoveByIdFile(getValue(msg, ':', 1).toInt());
     }
@@ -3077,7 +3077,7 @@ void interpreter(String msg){
       logV("seth:set=" + getValue(msg, ':', 1));
       if(startstat == 7){
         startstat = 8;
-        logN("start:ok  nœud opérationnel addr=" + String(localAddress));
+        logN("[OK] Noeud #" + String(localAddress) + " opérationnel et connecté au réseau");
       }
     }
     if(cmd == "geth"){
@@ -3097,20 +3097,20 @@ void interpreter(String msg){
       startstat = 1;
     }
     if(cmd == "sho"){
-      logN("maint:" + String(maintmode));
+      logN("[MODE] Maintenance actuellement " + String(maintmode ? "activée (veille désactivée)" : "désactivée (mode nominal)"));
     }
     if(cmd == "maint"){
       maintmode = true;
-      logN("mode:maint");
+      logN("[MODE] Passage en mode maintenance — la veille automatique est désactivée");
     }
     if(cmd == "norm"){
       maintmode = false;
-      logN("mode:nom");
+      logN("[MODE] Passage en mode nominal — la veille automatique est activée");
     }
     if(cmd == "stam"){
       rtc.setTime((getValue(msg, ':', 1)).toInt());
       startstat = 8;
-      logN("start:ok");
+      logN("[OK] Noeud #" + String(localAddress) + " synchronisé et opérationnel");
     }
     if(cmd == "fdih"){
       delay(10);
@@ -3133,7 +3133,7 @@ void interpreter(String msg){
       }
    }
    if(cmd == "gate"){
-      logN("gate:" + String(stationgateway));
+      logN("[GATEWAY] Adresse de la passerelle réseau : noeud #" + String(stationgateway));
    }
    if(cmd == "gdfh"){
     String tempid = generateid();
@@ -3185,7 +3185,7 @@ void interpreter(String msg){
       clearEdges();
     }
     if(cmd == "cachestate"){
-      logN("cache:" + String(prefs.getBool("incache",0)) + " gate:" + String(prefs.getBool("isgateonline",0)) + " q:" + String(togateCount));
+      logN("[GATEWAY] Cache actif : " + String(prefs.getBool("incache",0) ? "oui" : "non") + "  |  passerelle en ligne : " + String(prefs.getBool("isgateonline",0) ? "oui" : "non") + "  |  commandes en attente : " + String(togateCount));
     }
     if(cmd == "adrc"){
     int del = getValue(msg, ':', 1).toInt();
@@ -3199,15 +3199,15 @@ void interpreter(String msg){
       isfdeson = true;
       prefs.putUInt("offsetfile", 0);
       nbtogatefailfile = 0;
-      logN("ftx:start dest:" + String(filereceivientstation));
+      logN("[FICHIER TX] Initialisation du transfert vers le noeud #" + String(filereceivientstation) + "...");
     }
     if(cmd == "filestate"){
-      logN("ftx:cache=" + String(infilecache) + " on=" + String(isfdeson) + " q=" + String(togateCountFile));
+      logN("[FICHIER TX] État — cache actif : " + String(infilecache ? "oui" : "non") + "  |  envoi actif : " + String(isfdeson ? "oui" : "non") + "  |  lignes en attente : " + String(togateCountFile));
     }
     if(cmd == "stopfile"){
       isfdeson = false;
       infilecache = false;
-      logN("ftx:stop");
+      logN("[FICHIER TX] Transfert de fichier arrêté manuellement");
     }
     if(cmd == "expfile"){
       exportfile();
@@ -3225,7 +3225,7 @@ void interpreter(String msg){
           infilecache = true;
           filereceivientstation = getValue(msg, ':', 1).toInt();
           filetxdelai = (millis()/1000);
-          logN("stft:prêt " + ftfpath + " -> dest " + String(filereceivientstation) + ", connexion en cours...");
+          logN("[FICHIER TX] Fichier " + ftfpath + " prêt, connexion avec le noeud #" + String(filereceivientstation) + " en cours...");
           String tempisrf = "send:";
           tempisrf += filereceivientstation;
           tempisrf += ":isrf:";
@@ -3238,7 +3238,7 @@ void interpreter(String msg){
       if(filereceivientstation == -1 && filesender == -1 && !broadcastMode){
         filedelai = (millis()/1000);
         filesender = getValue(msg, ':', 1).toInt();
-        logN("frx:start from:" + String(filesender));
+        logN("[FICHIER RX] Début de réception d'un fichier depuis le noeud #" + String(filesender));
         remfromsd("/rx.txt");
         String temprfok = "send:";
         temprfok += filesender;
@@ -3249,7 +3249,7 @@ void interpreter(String msg){
     }
     if(cmd == "rfok"){
       if(getValue(msg, ':', 1).toInt() == filereceivientstation && isfdeson == false){
-        logN("ftx:go -> dest " + String(filereceivientstation) + ", envoi de " + ftfpath);
+        logN("[FICHIER TX] Noeud #" + String(filereceivientstation) + " prêt, envoi de " + ftfpath + " en cours...");
         isfdeson = true;
         prefs.putUInt("offsetfile", 0);
         nbtogatefailfile = 0;
@@ -3259,7 +3259,7 @@ void interpreter(String msg){
     
     if(cmd == "fend"){
       if(getValue(msg, ':', 1).toInt() == filesender){
-        logN("frx:fin depuis " + String(filesender) + ", compilation -> " + getValue(msg, ':', 2));
+        logN("[FICHIER RX] Fin de réception depuis le noeud #" + String(filesender) + ", compilation vers " + getValue(msg, ':', 2) + "...");
         String tempfntc = "compileFile:";
         tempfntc += getValue(msg, ':', 2);
         tempfntc += ":";
@@ -3274,7 +3274,7 @@ void interpreter(String msg){
       compileFile(getValue(msg, ':', 1), getValue(msg, ':', 2).toInt(), getValue(msg, ':', 3).toInt());      
     }
     if(cmd == "feok"){
-      logN("feok:" + getValue(msg, ':', 2) + " from:" + getValue(msg, ':', 1));
+      logN("[FICHIER TX] Confirmation reçue — " + getValue(msg, ':', 2) + " bien reçu par le noeud #" + getValue(msg, ':', 1));
       if(getValue(msg, ':', 3) == "1"){
         logD("feok:rm " + getValue(msg, ':', 2));
         remfromsd(getValue(msg, ':', 2));
@@ -3291,33 +3291,33 @@ void interpreter(String msg){
       doFirmwareUpdate();
     }
     if(cmd == "version"){
-      logN("ver:" + FIRMWARE_VERSION);
+      logN("[SYSTÈME] Version du firmware : " + FIRMWARE_VERSION);
     }
     if(cmd == "mkdir"){
       String path = getValue(msg, ':', 1);
-      logN("mkdir:" + path + (mkdirsd(path) ? " ok" : " err"));
+      logN("[SD] Dossier " + path + (mkdirsd(path) ? " créé avec succès" : " — erreur de création"));
     }
     if(cmd == "rmdir"){
       String path = getValue(msg, ':', 1);
-      logN("rmdir:" + path + (rmdirsd(path) ? " ok" : " err"));
+      logN("[SD] Dossier " + path + (rmdirsd(path) ? " supprimé" : " — erreur de suppression"));
     }
     if(cmd == "rm"){
       String path = getValue(msg, ':', 1);
-      logN("rm:" + path + (remfromsd(path) ? " ok" : " err"));
+      logN("[SD] Fichier " + path + (remfromsd(path) ? " supprimé" : " — erreur de suppression"));
     }
     if(cmd == "cp"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      logN("cp:" + src + "->" + dst + (cpsd(src, dst) ? " ok" : " err"));
+      logN("[SD] Copie " + src + " -> " + dst + (cpsd(src, dst) ? " : succès" : " : erreur"));
     }
     if(cmd == "mv"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      logN("mv:" + src + "->" + dst + (mvsd(src, dst) ? " ok" : " err"));
+      logN("[SD] Déplacement " + src + " -> " + dst + (mvsd(src, dst) ? " : succès" : " : erreur"));
     }
     if(cmd == "ls"){
       String path = getValue(msg, ':', 1);
@@ -3365,12 +3365,12 @@ void interpreter(String msg){
           logD("diff:brdl envoyé");
           scheduleCommand(5000, "brdfstart");
         } else {
-          logN("err:diff parse echec");
+          logN("[ERREUR] Diffusion réseau : impossible de parser le fichier source");
           broadcastMode = false;
           broadcastEmitter = false;
         }
       } else {
-        logN("err:diff en cours");
+        logN("[ERREUR] Diffusion impossible : un transfert ou une diffusion est déjà en cours");
       }
     }
 
