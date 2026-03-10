@@ -2129,6 +2129,7 @@ void lssd(String path){
   File dir = SD.open(path);
   if(!dir || !dir.isDirectory()){
     if(dir) dir.close();
+    logN("[SD] Répertoire " + path + " introuvable ou invalide");
     sdToLora();
     delay(200);
     return;
@@ -2842,7 +2843,7 @@ void changepval(String parn, String parv){
   if(parn == "serialLevel"){
     int sl = parv.toInt();
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
-    Serial.println("parm:serialLevel=" + String(serialLevel));
+    Serial.println("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
   }
 }
 
@@ -2850,11 +2851,13 @@ void interpreter(String msg){
   String cmd = getValue(msg, ':', 0);
   actiontimer = (millis()/1000);
 
-  if(cmd == "read"){  
+  if(cmd == "read"){
       readsd(1);
-  }  
-  if(cmd == "write"){  
+      logN("[OK] Carte réseau et paramètres rechargés depuis la carte SD");
+  }
+  if(cmd == "write"){
      writetosd();
+     logN("[OK] Configuration sauvegardée sur la carte SD");
   }  
   if(cmd == "data"){
     logN(msg.substring(5, msg.length()));
@@ -3175,14 +3178,17 @@ void interpreter(String msg){
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      Serial.println("slvl:" + String(serialLevel));
+      Serial.println("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
     if(cmd == "cout"){
+      logN("[GATEWAY] Envoi de la prochaine entrée du cache vers la passerelle...");
       exportcache();
     }
     if(cmd == "clear"){
+      int prevEdges = numEdges;
       clearEdges();
+      logN("[OK] Table de routage effacée (" + String(prevEdges) + " lien(s) supprimé(s))");
     }
     if(cmd == "cachestate"){
       logN("[GATEWAY] Cache actif : " + String(prefs.getBool("incache",0) ? "oui" : "non") + "  |  passerelle en ligne : " + String(prefs.getBool("isgateonline",0) ? "oui" : "non") + "  |  commandes en attente : " + String(togateCount));
@@ -3210,6 +3216,7 @@ void interpreter(String msg){
       logN("[FICHIER TX] Transfert de fichier arrêté manuellement");
     }
     if(cmd == "expfile"){
+      logN("[FICHIER TX] Envoi de la prochaine ligne du fichier en cache...");
       exportfile();
     }
     if(cmd == "file"){
@@ -3281,11 +3288,13 @@ void interpreter(String msg){
       }
     }
     if(cmd == "reboot"){
+      logN("[SYSTÈME] Redémarrage du noeud en cours...");
       writetosd();
       delay(500);
       ESP.restart();
     }
     if(cmd == "upgrade"){
+      logN("[MISE À JOUR] Lancement de la mise à jour du firmware...");
       writetosd();
       delay(500);
       doFirmwareUpdate();
