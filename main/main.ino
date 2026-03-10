@@ -199,7 +199,7 @@ void loraToSD() {
     lora.releaseBus();
     digitalWrite(20, 0);
     delay(100);
-    if (!SD.begin(7)) { logN("err:sd"); }
+    if (!SD.begin(7)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
 }
 
 void sdToLora() {
@@ -209,7 +209,7 @@ void sdToLora() {
 
 bool togateAddCommand(int id, String command) {
   if (togateCount >= MAX_TOGATE_COMMANDS) {
-    logN("err:togate file pleine");
+    logN("[ERREUR] File de commandes gateway pleine, commande ignorée");
     return false;
   }
 
@@ -243,7 +243,7 @@ void togatePurgeOld() {
         myFile.close();
       }
       else{
-        logN("err:sd togate.cache");
+        logN("[ERREUR SD] Impossible d'écrire dans /togate.cache");
       }
 
       sdToLora();
@@ -297,7 +297,7 @@ void togateAddCommandFile(int id, String command) {
     togateCountFile++;
     logD("togatef:add id=" + String(id));
   } else {
-    logN("err:togatef file pleine");
+    logN("[ERREUR] File de commandes fichier pleine");
   }
 }
 
@@ -360,7 +360,7 @@ void purgeToOldFile() {
       myFile.close();
       logD("togatef:restore tx.txt");
     } else {
-      logN("err:sd tx.txt restore");
+      logN("[ERREUR SD] Impossible de restaurer les lignes dans /tx.txt");
     }
     sdToLora();
   }
@@ -627,9 +627,9 @@ bool parseFile(String path) {
   logD("parse:start " + path);
   delay(50);
   loraToSD();
-  if (!SD.exists(path)) { logN("err:parse " + path + " introuvable"); return false; }
+  if (!SD.exists(path)) { logN("[ERREUR] Impossible de parser " + path + " : fichier introuvable"); return false; }
   File inF = SD.open(path, FILE_READ);
-  if (!inF) { logN("err:parse " + path + " inouvrable"); return false; }
+  if (!inF) { logN("[ERREUR] Impossible d'ouvrir " + path + " pour l'encodage"); return false; }
 
   uint32_t fileSize = inF.size();
   uint32_t fcrc = crc32_file(inF);
@@ -642,7 +642,7 @@ bool parseFile(String path) {
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
-  if (!tx) { inF.close(); logN("err:parse tx.txt"); return false; }
+  if (!tx) { inF.close(); logN("[ERREUR SD] Impossible de créer /tx.txt pour l'encodage"); return false; }
 
   tx.printf("META:%u:%08X:%u:%u\n", totalDataPackets, fcrc, fileSize, parityGroups);
   tx.flush();
@@ -725,22 +725,22 @@ void compileFile(String fnameced, int origin, int toremof) {
   logD("compile:start " + fnameced);
   delay(50);
   loraToSD();
-  if (!SD.exists("/rx.txt")) { logN("err:compile rx.txt introuvable"); return; }
+  if (!SD.exists("/rx.txt")) { logN("[ERREUR] Compilation impossible : /rx.txt introuvable"); return; }
   File rx = SD.open("/rx.txt", FILE_READ);
-  if (!rx) { logN("err:compile rx.txt"); return; }
+  if (!rx) { logN("[ERREUR SD] Impossible d'ouvrir /rx.txt pour la compilation"); return; }
 
   String meta = rx.readStringUntil('\n'); meta.trim();
-  if (!meta.startsWith("META:")) { rx.close(); logN("err:compile META"); return; }
+  if (!meta.startsWith("META:")) { rx.close(); logN("[ERREUR] Compilation : en-tête META manquant ou corrompu"); return; }
 
   unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0;
   int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
-  if (scanned<4) { logN("err:compile parse meta"); rx.close(); return; }
+  if (scanned<4) { logN("[ERREUR] Compilation : impossible de lire les paramètres META"); rx.close(); return; }
 
   if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u pkt %u oct CRC=%08X\n", totalDataPackets, expectedSize, fileCRC); }
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
-  if (!out) { rx.close(); logN("err:compile out"); return; }
+  if (!out) { rx.close(); logN("[ERREUR SD] Impossible de créer le fichier de sortie de compilation"); return; }
 
   uint32_t bytesWritten=0;
 
@@ -943,7 +943,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:CRC rejects=%d\n", crcRejects); }
 
   File outf = SD.open(fnameced, FILE_READ);
-  if (!outf) { logN("err:compile sortie introuvable"); sdToLora(); return; }
+  if (!outf) { logN("[ERREUR] Fichier compilé introuvable après écriture"); sdToLora(); return; }
   uint32_t finalCRC=crc32_file(outf);
   uint32_t finalSize=outf.size();
   SD.remove("/rx.txt");
@@ -962,7 +962,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
   if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u/%u oct CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
-    logN("frx:ok " + fnameced + (origin >= 0 ? " depuis " + String(origin) : " (broadcast)"));
+    logN("[FICHIER RX] Fichier " + fnameced + " reçu et compilé avec succès" + (origin >= 0 ? " (depuis noeud #" + String(origin) + ")" : " (diffusion réseau)"));
     if(origin >= 0){
       String tempfeok = "send:";
       tempfeok += origin;
@@ -1069,7 +1069,7 @@ void addOrUpdateEdge(int v1, int v2, int weight) {
     logD("edge:add " + String(v1) + "-" + String(v2) + " w=" + String(weight));
     updateVertices();
   } else if (numEdges >= MAX_EDGES) {
-    logN("err:edge table pleine");
+    logN("[ERREUR] Table de routage pleine, nouveau lien ignoré");
   }
 }
 
@@ -1346,7 +1346,7 @@ void startprocedure(){
   if(startstat == 1){
     interpreter("pigo");
     startstat = 2;
-    logN("start: découverte du réseau...");
+    logN("[DÉMARRAGE] Lancement de la découverte réseau (ping)...");
   }
   if(startstat == 2 && pingphase == 0 && ((millis()/1000) - fpingdel > 30)){
     startstat = 3;
