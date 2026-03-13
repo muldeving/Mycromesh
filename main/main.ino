@@ -2352,14 +2352,18 @@ bool doFirmwareUpdate() {
 }
 
 // --- CPU Frequency Scaling ---
-// idle = 20 MHz (polling, attente), turbo = 160 MHz (traitement actif)
+// idle : 20 MHz en mode USB, 80 MHz minimum en mode BLE (contrainte du stack BLE ESP32-C3)
+// turbo : 160 MHz pour les traitements intensifs (encodage RS, compilation fichier…)
+#define CPU_FREQ_IDLE   20
+#define CPU_FREQ_BLE    80   // fréquence minimale requise par le stack BLE sur ESP32-C3
+#define CPU_FREQ_TURBO  160
 
 void cpuTurbo() {
-  setCpuFrequencyMhz(160);
+  setCpuFrequencyMhz(CPU_FREQ_TURBO);
 }
 
 void cpuIdle() {
-  setCpuFrequencyMhz(20);
+  setCpuFrequencyMhz(ioMode == IO_BLUETOOTH ? CPU_FREQ_BLE : CPU_FREQ_IDLE);
 }
 
 void setup() {
