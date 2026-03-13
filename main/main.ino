@@ -12,6 +12,10 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHT10.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 Adafruit_BMP280 bmp;
 Adafruit_AHT10 aht;
@@ -33,6 +37,10 @@ const String FIRMWARE_VERSION = "1.3.0";
 
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
+
+#define CPU_FREQ_IDLE   20
+#define CPU_FREQ_BLE    80   // fréquence minimale requise par le stack BLE sur ESP32-C3
+#define CPU_FREQ_TURBO  160
 
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
@@ -61,6 +69,12 @@ long TOGATE_COMMAND_TIMEOUT = 60000;
 #define LOG_VERBOSE 2
 #define LOG_DEBUG   3
 int serialLevel = 1;
+
+// Mode E/S : sélectionne le canal actif pour ioOutput / handleSerialInput
+// IO_LORA (2) sera ajouté lors de l'intégration de la troisième sortie
+#define IO_USB       0
+#define IO_BLUETOOTH 1
+int ioMode = IO_USB;
 
 // variables d'état
 
@@ -191,9 +205,110 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
-void logN(const String& msg) { if(serialLevel >= LOG_NORMAL)  Serial.println(msg); }
-void logV(const String& msg) { if(serialLevel >= LOG_VERBOSE) Serial.println(msg); }
-void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   Serial.println(msg); }
+// --- BLE UART (Nordic UART Service) ---
+#define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+BLEServer*         bleServer    = nullptr;
+BLECharacteristic* bleTxChar    = nullptr;
+bool               bleConnected = false;
+String             bleRxBuffer  = "";
+bool               bleRxReady   = false;
+
+class BLEServerCB : public BLEServerCallbacks {
+  void onConnect(BLEServer*)    override { bleConnected = true;  }
+  void onDisconnect(BLEServer* s) override {
+    bleConnected = false;
+    s->startAdvertising(); // relance la publicité pour permettre une reconnexion
+  }
+};
+
+class BLERxCB : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* c) override {
+    bleRxBuffer = c->getValue().c_str();
+    bleRxReady  = true;
+  }
+};
+
+void startBLE() {
+  cpuTurbo();
+  if (bleServer) return; // déjà démarré
+  BLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new BLEServerCB());
+
+  BLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
+
+  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  bleTxChar->addDescriptor(new BLE2902());
+
+  BLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, BLECharacteristic::PROPERTY_WRITE);
+  rxChar->setCallbacks(new BLERxCB());
+
+  svc->start();
+
+  // Configure l'advertising : inclut l'UUID du service NUS et le nom du périphérique
+  // sans cela le périphérique n'est pas identifiable par les scanners BLE (LightBlue, nRF Connect…)
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  adv->addServiceUUID(BLE_SERVICE_UUID);
+  adv->setScanResponse(true);   // inclut le nom dans la réponse de scan active
+  adv->start();
+}
+
+void stopBLE() {
+  if (!bleServer) return;
+  bleServer->getAdvertising()->stop();
+  BLEDevice::deinit(true);
+  bleServer    = nullptr;
+  bleTxChar    = nullptr;
+  bleConnected = false;
+  bleRxReady   = false;
+  bleRxBuffer  = "";
+}
+// --------------------------------------
+
+// --- Couche d'abstraction E/S ---
+// Centralise toutes les sorties texte du firmware.
+// Pour ajouter un canal, incrémenter IO_* et ajouter un case ici.
+void ioOutput(const String& msg) {
+  switch (ioMode) {
+    case IO_USB:
+      Serial.println(msg);
+      break;
+    case IO_BLUETOOTH:
+      if (bleConnected && bleTxChar) {
+        String line = msg + "\n";
+        bleTxChar->setValue(line.c_str());
+        bleTxChar->notify();
+      }
+      break;
+  }
+}
+
+// Lit l'entrée du canal actif et envoie la commande à l'interpréteur.
+// Pour ajouter un canal, ajouter un case ici.
+void handleSerialInput() {
+  switch (ioMode) {
+    case IO_USB:
+      if (Serial.available() > 0) { interpreter(Serial.readString()); delay(100); }
+      break;
+    case IO_BLUETOOTH:
+      if (bleRxReady) {
+        bleRxReady = false;
+        String cmd = bleRxBuffer;
+        bleRxBuffer = "";
+        interpreter(cmd);
+        delay(100);
+      }
+      break;
+  }
+}
+// --------------------------------
+
+void logN(const String& msg) { if(serialLevel >= LOG_NORMAL)  ioOutput(msg); }
+void logV(const String& msg) { if(serialLevel >= LOG_VERBOSE) ioOutput(msg); }
+void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   ioOutput(msg); }
 
 void loraToSD() {
     lora.releaseBus();
@@ -638,7 +753,7 @@ bool parseFile(String path) {
   uint32_t totalDataPackets = (fileSize + PACKET_SIZE - 1) / PACKET_SIZE;
   uint32_t parityGroups = (totalDataPackets + GROUP_K - 1) / GROUP_K;
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("parse:%u oct CRC=%08X pkt=%u grp=%u\n", fileSize, fcrc, totalDataPackets, parityGroups); }
+  if(serialLevel >= LOG_DEBUG){ char _b[64]; snprintf(_b, sizeof(_b), "parse:%u oct CRC=%08X pkt=%u grp=%u", fileSize, fcrc, totalDataPackets, parityGroups); ioOutput(String(_b)); }
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
@@ -701,7 +816,7 @@ bool parseFile(String path) {
 
     if ((g+1) % 20 == 0) {
       tx.flush();
-      if(serialLevel >= LOG_DEBUG){ Serial.printf("encode:%u/%u\n", g+1, parityGroups); }
+      if(serialLevel >= LOG_DEBUG){ ioOutput("encode:" + String(g+1) + "/" + String(parityGroups)); }
     }
   }
 
@@ -736,7 +851,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
   if (scanned<4) { logN("[ERREUR] Compilation : impossible de lire les paramètres META"); rx.close(); return; }
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u pkt %u oct CRC=%08X\n", totalDataPackets, expectedSize, fileCRC); }
+  if(serialLevel >= LOG_DEBUG){ char _b[64]; snprintf(_b, sizeof(_b), "compile:%u pkt %u oct CRC=%08X", totalDataPackets, expectedSize, fileCRC); ioOutput(String(_b)); }
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
@@ -929,7 +1044,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
     if ((g+1) % 10 == 0) {
       out.flush();
-      if(serialLevel >= LOG_DEBUG){ Serial.printf("decode:%u/%u\n", g+1, parityGroups); }
+      if(serialLevel >= LOG_DEBUG){ ioOutput("decode:" + String(g+1) + "/" + String(parityGroups)); }
     }
   }
 
@@ -940,7 +1055,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   out.close();
   rx.close();
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:CRC rejects=%d\n", crcRejects); }
+  if(serialLevel >= LOG_DEBUG){ ioOutput("compile:CRC rejects=" + String(crcRejects)); }
 
   File outf = SD.open(fnameced, FILE_READ);
   if (!outf) { logN("[ERREUR] Fichier compilé introuvable après écriture"); sdToLora(); return; }
@@ -960,7 +1075,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   outf.close();
   sdToLora();
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u/%u oct CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC); }
+  if(serialLevel >= LOG_DEBUG){ char _b[80]; snprintf(_b, sizeof(_b), "compile:%u/%u oct CRC=%08X/%08X", finalSize, expectedSize, finalCRC, fileCRC); ioOutput(String(_b)); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
     logN("[FICHIER RX] Fichier " + fnameced + " reçu et compilé avec succès" + (origin >= 0 ? " (depuis noeud #" + String(origin) + ")" : " (diffusion réseau)"));
     if(origin >= 0){
@@ -1081,9 +1196,9 @@ void clearEdges() {
 
 void printEdges() {
   if(serialLevel < LOG_NORMAL) return;
-  Serial.println("edges:");
+  ioOutput("edges:");
   for (int i = 0; i < numEdges; i++) {
-    Serial.println(String(edges[i].vertex1) + "-" + String(edges[i].vertex2) + " w:" + String(edges[i].weight));
+    ioOutput(String(edges[i].vertex1) + "-" + String(edges[i].vertex2) + " w:" + String(edges[i].weight));
   }
 }
 
@@ -1305,9 +1420,9 @@ void removeExpiredValues() {
 
 void printDataArray() {
   if(serialLevel < LOG_NORMAL) return;
-  Serial.println("cache:");
+  ioOutput("cache:");
   for (int i = 0; i < dataCount; i++) {
-    Serial.println(dataArray[i].value + " +" + String(DELAY - (millis() - dataArray[i].time)) + "ms");
+    ioOutput(dataArray[i].value + " +" + String(DELAY - (millis() - dataArray[i].time)) + "ms");
   }
 }
 
@@ -1666,6 +1781,7 @@ void readsd(bool allrecover){
       stationgateway = getValue(sdtopar, ':', 7).toInt();
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1720,7 +1836,9 @@ void writetosd(){
     varptosd += ":";
     varptosd += serialLevel;
     varptosd += ":";
-    
+    varptosd += ioMode;
+    varptosd += ":";
+
     testFile = SD.open("/p.cfg", FILE_WRITE);
     if (testFile) {
       testFile.println(varptosd);
@@ -2136,15 +2254,16 @@ void lssd(String path){
   }
 
   if(serialLevel < LOG_NORMAL) { dir.close(); sdToLora(); delay(200); return; }
+  String _listing = "";
   File entry = dir.openNextFile();
   while(entry){
-    Serial.print(entry.name());
-    if(entry.isDirectory()) Serial.print("/");
-    Serial.print(" ");
+    _listing += entry.name();
+    if(entry.isDirectory()) _listing += "/";
+    _listing += " ";
     entry.close();
     entry = dir.openNextFile();
   }
-  Serial.println();
+  ioOutput(_listing);
   dir.close();
   sdToLora();
   delay(200);
@@ -2238,14 +2357,20 @@ bool doFirmwareUpdate() {
 }
 
 // --- CPU Frequency Scaling ---
-// idle = 20 MHz (polling, attente), turbo = 160 MHz (traitement actif)
+// idle : 20 MHz en mode USB, 80 MHz minimum en mode BLE (contrainte du stack BLE ESP32-C3)
+// turbo : 160 MHz pour les traitements intensifs (encodage RS, compilation fichier…)
 
 void cpuTurbo() {
-  setCpuFrequencyMhz(160);
+  setCpuFrequencyMhz(CPU_FREQ_TURBO);
 }
 
 void cpuIdle() {
-  setCpuFrequencyMhz(20);
+  if (ioMode == IO_BLUETOOTH){
+    setCpuFrequencyMhz(CPU_FREQ_BLE);
+  }
+  else{
+    setCpuFrequencyMhz(CPU_FREQ_IDLE);
+  }
 }
 
 void setup() {
@@ -2262,7 +2387,7 @@ void setup() {
   cfg.bandwidth = 125000;
 
   if (!lora.begin(cfg)) {
-    Serial.println("err:lora init");
+    ioOutput("err:lora init");
     while (true);
   }
 
@@ -2286,17 +2411,15 @@ void setup() {
     maintmode = true;
   }
 
+  if (ioMode == IO_BLUETOOTH) startBLE();
+
   logN("[OK] Noeud #" + String(localAddress) + " démarré — firmware " + FIRMWARE_VERSION);
   actiontimer = (millis()/1000);
   lora.receive();
 }
 
 void loop() {
-  if(Serial.available()>0)
-   {
-    interpreter(Serial.readString());
-    delay(100);
-   }
+  handleSerialInput();
   if (lora.available()) { onReceive(); }
       
   if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
@@ -2843,7 +2966,7 @@ void changepval(String parn, String parv){
   if(parn == "serialLevel"){
     int sl = parv.toInt();
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
-    Serial.println("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
+    ioOutput("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
   }
 }
 
@@ -3178,8 +3301,26 @@ void interpreter(String msg){
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      Serial.println("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
+      ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
+    }
+    if(cmd == "iomd"){
+      String arg = getValue(msg, ':', 1);
+      if(arg == "usb"){
+        if(ioMode == IO_BLUETOOTH) stopBLE();
+        ioMode = IO_USB;
+        ioOutput("[IO] Mode USB activé");
+        writetosd();
+      } else if(arg == "bt"){
+        if(ioMode != IO_BLUETOOTH){
+          ioMode = IO_BLUETOOTH;
+          startBLE();
+          writetosd();
+        }
+        ioOutput("[IO] Mode Bluetooth activé — appareil: Mycromesh-" + String(localAddress));
+      } else {
+        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt");
+      }
     }
     if(cmd == "cout"){
       logN("[GATEWAY] Envoi de la prochaine entrée du cache vers la passerelle...");
