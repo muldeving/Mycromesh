@@ -191,9 +191,24 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
-void logN(const String& msg) { if(serialLevel >= LOG_NORMAL)  Serial.println(msg); }
-void logV(const String& msg) { if(serialLevel >= LOG_VERBOSE) Serial.println(msg); }
-void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   Serial.println(msg); }
+// --- Couche d'abstraction E/S ---
+// Centralise toutes les sorties texte du firmware.
+// À terme, cette fonction pourra router vers USB Serial, Bluetooth ou LoRa.
+void ioOutput(const String& msg) { Serial.println(msg); }
+
+// Lit l'entrée série USB et envoie la commande à l'interpréteur.
+// À terme, cette fonction pourra aussi lire depuis Bluetooth ou LoRa.
+void handleSerialInput() {
+  if (Serial.available() > 0) {
+    interpreter(Serial.readString());
+    delay(100);
+  }
+}
+// --------------------------------
+
+void logN(const String& msg) { if(serialLevel >= LOG_NORMAL)  ioOutput(msg); }
+void logV(const String& msg) { if(serialLevel >= LOG_VERBOSE) ioOutput(msg); }
+void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   ioOutput(msg); }
 
 void loraToSD() {
     lora.releaseBus();
@@ -638,7 +653,7 @@ bool parseFile(String path) {
   uint32_t totalDataPackets = (fileSize + PACKET_SIZE - 1) / PACKET_SIZE;
   uint32_t parityGroups = (totalDataPackets + GROUP_K - 1) / GROUP_K;
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("parse:%u oct CRC=%08X pkt=%u grp=%u\n", fileSize, fcrc, totalDataPackets, parityGroups); }
+  if(serialLevel >= LOG_DEBUG){ char _b[64]; snprintf(_b, sizeof(_b), "parse:%u oct CRC=%08X pkt=%u grp=%u", fileSize, fcrc, totalDataPackets, parityGroups); ioOutput(String(_b)); }
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
@@ -701,7 +716,7 @@ bool parseFile(String path) {
 
     if ((g+1) % 20 == 0) {
       tx.flush();
-      if(serialLevel >= LOG_DEBUG){ Serial.printf("encode:%u/%u\n", g+1, parityGroups); }
+      if(serialLevel >= LOG_DEBUG){ ioOutput("encode:" + String(g+1) + "/" + String(parityGroups)); }
     }
   }
 
@@ -736,7 +751,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
   if (scanned<4) { logN("[ERREUR] Compilation : impossible de lire les paramètres META"); rx.close(); return; }
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u pkt %u oct CRC=%08X\n", totalDataPackets, expectedSize, fileCRC); }
+  if(serialLevel >= LOG_DEBUG){ char _b[64]; snprintf(_b, sizeof(_b), "compile:%u pkt %u oct CRC=%08X", totalDataPackets, expectedSize, fileCRC); ioOutput(String(_b)); }
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
@@ -929,7 +944,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
     if ((g+1) % 10 == 0) {
       out.flush();
-      if(serialLevel >= LOG_DEBUG){ Serial.printf("decode:%u/%u\n", g+1, parityGroups); }
+      if(serialLevel >= LOG_DEBUG){ ioOutput("decode:" + String(g+1) + "/" + String(parityGroups)); }
     }
   }
 
@@ -940,7 +955,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   out.close();
   rx.close();
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:CRC rejects=%d\n", crcRejects); }
+  if(serialLevel >= LOG_DEBUG){ ioOutput("compile:CRC rejects=" + String(crcRejects)); }
 
   File outf = SD.open(fnameced, FILE_READ);
   if (!outf) { logN("[ERREUR] Fichier compilé introuvable après écriture"); sdToLora(); return; }
@@ -960,7 +975,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   outf.close();
   sdToLora();
 
-  if(serialLevel >= LOG_DEBUG){ Serial.printf("compile:%u/%u oct CRC=%08X/%08X\n",finalSize,expectedSize,finalCRC,fileCRC); }
+  if(serialLevel >= LOG_DEBUG){ char _b[80]; snprintf(_b, sizeof(_b), "compile:%u/%u oct CRC=%08X/%08X", finalSize, expectedSize, finalCRC, fileCRC); ioOutput(String(_b)); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
     logN("[FICHIER RX] Fichier " + fnameced + " reçu et compilé avec succès" + (origin >= 0 ? " (depuis noeud #" + String(origin) + ")" : " (diffusion réseau)"));
     if(origin >= 0){
@@ -1081,9 +1096,9 @@ void clearEdges() {
 
 void printEdges() {
   if(serialLevel < LOG_NORMAL) return;
-  Serial.println("edges:");
+  ioOutput("edges:");
   for (int i = 0; i < numEdges; i++) {
-    Serial.println(String(edges[i].vertex1) + "-" + String(edges[i].vertex2) + " w:" + String(edges[i].weight));
+    ioOutput(String(edges[i].vertex1) + "-" + String(edges[i].vertex2) + " w:" + String(edges[i].weight));
   }
 }
 
@@ -1305,9 +1320,9 @@ void removeExpiredValues() {
 
 void printDataArray() {
   if(serialLevel < LOG_NORMAL) return;
-  Serial.println("cache:");
+  ioOutput("cache:");
   for (int i = 0; i < dataCount; i++) {
-    Serial.println(dataArray[i].value + " +" + String(DELAY - (millis() - dataArray[i].time)) + "ms");
+    ioOutput(dataArray[i].value + " +" + String(DELAY - (millis() - dataArray[i].time)) + "ms");
   }
 }
 
@@ -2136,15 +2151,16 @@ void lssd(String path){
   }
 
   if(serialLevel < LOG_NORMAL) { dir.close(); sdToLora(); delay(200); return; }
+  String _listing = "";
   File entry = dir.openNextFile();
   while(entry){
-    Serial.print(entry.name());
-    if(entry.isDirectory()) Serial.print("/");
-    Serial.print(" ");
+    _listing += entry.name();
+    if(entry.isDirectory()) _listing += "/";
+    _listing += " ";
     entry.close();
     entry = dir.openNextFile();
   }
-  Serial.println();
+  ioOutput(_listing);
   dir.close();
   sdToLora();
   delay(200);
@@ -2262,7 +2278,7 @@ void setup() {
   cfg.bandwidth = 125000;
 
   if (!lora.begin(cfg)) {
-    Serial.println("err:lora init");
+    ioOutput("err:lora init");
     while (true);
   }
 
@@ -2292,11 +2308,7 @@ void setup() {
 }
 
 void loop() {
-  if(Serial.available()>0)
-   {
-    interpreter(Serial.readString());
-    delay(100);
-   }
+  handleSerialInput();
   if (lora.available()) { onReceive(); }
       
   if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
@@ -2843,7 +2855,7 @@ void changepval(String parn, String parv){
   if(parn == "serialLevel"){
     int sl = parv.toInt();
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
-    Serial.println("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
+    ioOutput("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
   }
 }
 
@@ -3178,7 +3190,7 @@ void interpreter(String msg){
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      Serial.println("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
+      ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
     if(cmd == "cout"){
