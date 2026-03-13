@@ -242,7 +242,13 @@ void startBLE() {
   rxChar->setCallbacks(new BLERxCB());
 
   svc->start();
-  bleServer->getAdvertising()->start();
+
+  // Configure l'advertising : inclut l'UUID du service NUS et le nom du périphérique
+  // sans cela le périphérique n'est pas identifiable par les scanners BLE (LightBlue, nRF Connect…)
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  adv->addServiceUUID(BLE_SERVICE_UUID);
+  adv->setScanResponse(true);   // inclut le nom dans la réponse de scan active
+  adv->start();
 }
 
 void stopBLE() {
