@@ -12,6 +12,10 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHT10.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 Adafruit_BMP280 bmp;
 Adafruit_AHT10 aht;
@@ -61,6 +65,12 @@ long TOGATE_COMMAND_TIMEOUT = 60000;
 #define LOG_VERBOSE 2
 #define LOG_DEBUG   3
 int serialLevel = 1;
+
+// Mode E/S : sélectionne le canal actif pour ioOutput / handleSerialInput
+// IO_LORA (2) sera ajouté lors de l'intégration de la troisième sortie
+#define IO_USB       0
+#define IO_BLUETOOTH 1
+int ioMode = IO_USB;
 
 // variables d'état
 
@@ -191,17 +201,96 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
+// --- BLE UART (Nordic UART Service) ---
+#define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+BLEServer*         bleServer    = nullptr;
+BLECharacteristic* bleTxChar    = nullptr;
+bool               bleConnected = false;
+String             bleRxBuffer  = "";
+bool               bleRxReady   = false;
+
+class BLEServerCB : public BLEServerCallbacks {
+  void onConnect(BLEServer*)    override { bleConnected = true;  }
+  void onDisconnect(BLEServer* s) override {
+    bleConnected = false;
+    s->startAdvertising(); // relance la publicité pour permettre une reconnexion
+  }
+};
+
+class BLERxCB : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* c) override {
+    bleRxBuffer = c->getValue().c_str();
+    bleRxReady  = true;
+  }
+};
+
+void startBLE() {
+  if (bleServer) return; // déjà démarré
+  BLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new BLEServerCB());
+
+  BLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
+
+  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  bleTxChar->addDescriptor(new BLE2902());
+
+  BLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, BLECharacteristic::PROPERTY_WRITE);
+  rxChar->setCallbacks(new BLERxCB());
+
+  svc->start();
+  bleServer->getAdvertising()->start();
+}
+
+void stopBLE() {
+  if (!bleServer) return;
+  bleServer->getAdvertising()->stop();
+  BLEDevice::deinit(true);
+  bleServer    = nullptr;
+  bleTxChar    = nullptr;
+  bleConnected = false;
+  bleRxReady   = false;
+  bleRxBuffer  = "";
+}
+// --------------------------------------
+
 // --- Couche d'abstraction E/S ---
 // Centralise toutes les sorties texte du firmware.
-// À terme, cette fonction pourra router vers USB Serial, Bluetooth ou LoRa.
-void ioOutput(const String& msg) { Serial.println(msg); }
+// Pour ajouter un canal, incrémenter IO_* et ajouter un case ici.
+void ioOutput(const String& msg) {
+  switch (ioMode) {
+    case IO_USB:
+      Serial.println(msg);
+      break;
+    case IO_BLUETOOTH:
+      if (bleConnected && bleTxChar) {
+        String line = msg + "\n";
+        bleTxChar->setValue(line.c_str());
+        bleTxChar->notify();
+      }
+      break;
+  }
+}
 
-// Lit l'entrée série USB et envoie la commande à l'interpréteur.
-// À terme, cette fonction pourra aussi lire depuis Bluetooth ou LoRa.
+// Lit l'entrée du canal actif et envoie la commande à l'interpréteur.
+// Pour ajouter un canal, ajouter un case ici.
 void handleSerialInput() {
-  if (Serial.available() > 0) {
-    interpreter(Serial.readString());
-    delay(100);
+  switch (ioMode) {
+    case IO_USB:
+      if (Serial.available() > 0) { interpreter(Serial.readString()); delay(100); }
+      break;
+    case IO_BLUETOOTH:
+      if (bleRxReady) {
+        bleRxReady = false;
+        String cmd = bleRxBuffer;
+        bleRxBuffer = "";
+        interpreter(cmd);
+        delay(100);
+      }
+      break;
   }
 }
 // --------------------------------
@@ -1681,6 +1770,7 @@ void readsd(bool allrecover){
       stationgateway = getValue(sdtopar, ':', 7).toInt();
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1735,7 +1825,9 @@ void writetosd(){
     varptosd += ":";
     varptosd += serialLevel;
     varptosd += ":";
-    
+    varptosd += ioMode;
+    varptosd += ":";
+
     testFile = SD.open("/p.cfg", FILE_WRITE);
     if (testFile) {
       testFile.println(varptosd);
@@ -2301,6 +2393,8 @@ void setup() {
     actiontimerdel = 30;
     maintmode = true;
   }
+
+  if (ioMode == IO_BLUETOOTH) startBLE();
 
   logN("[OK] Noeud #" + String(localAddress) + " démarré — firmware " + FIRMWARE_VERSION);
   actiontimer = (millis()/1000);
@@ -3192,6 +3286,24 @@ void interpreter(String msg){
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
+    }
+    if(cmd == "iomd"){
+      String arg = getValue(msg, ':', 1);
+      if(arg == "usb"){
+        if(ioMode == IO_BLUETOOTH) stopBLE();
+        ioMode = IO_USB;
+        ioOutput("[IO] Mode USB activé");
+        writetosd();
+      } else if(arg == "bt"){
+        if(ioMode != IO_BLUETOOTH){
+          ioMode = IO_BLUETOOTH;
+          startBLE();
+          writetosd();
+        }
+        ioOutput("[IO] Mode Bluetooth activé — appareil: Mycromesh-" + String(localAddress));
+      } else {
+        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt");
+      }
     }
     if(cmd == "cout"){
       logN("[GATEWAY] Envoi de la prochaine entrée du cache vers la passerelle...");
