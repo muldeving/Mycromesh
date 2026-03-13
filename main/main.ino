@@ -38,6 +38,10 @@ const String FIRMWARE_VERSION = "1.3.0";
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
 
+#define CPU_FREQ_IDLE   20
+#define CPU_FREQ_BLE    80   // fréquence minimale requise par le stack BLE sur ESP32-C3
+#define CPU_FREQ_TURBO  160
+
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
 
@@ -228,6 +232,7 @@ class BLERxCB : public BLECharacteristicCallbacks {
 };
 
 void startBLE() {
+  cpuTurbo();
   if (bleServer) return; // déjà démarré
   BLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
   bleServer = BLEDevice::createServer();
@@ -2352,14 +2357,20 @@ bool doFirmwareUpdate() {
 }
 
 // --- CPU Frequency Scaling ---
-// idle = 20 MHz (polling, attente), turbo = 160 MHz (traitement actif)
+// idle : 20 MHz en mode USB, 80 MHz minimum en mode BLE (contrainte du stack BLE ESP32-C3)
+// turbo : 160 MHz pour les traitements intensifs (encodage RS, compilation fichier…)
 
 void cpuTurbo() {
-  setCpuFrequencyMhz(160);
+  setCpuFrequencyMhz(CPU_FREQ_TURBO);
 }
 
 void cpuIdle() {
-  setCpuFrequencyMhz(20);
+  if (ioMode == IO_BLUETOOTH){
+    setCpuFrequencyMhz(CPU_FREQ_BLE);
+  }
+  else{
+    setCpuFrequencyMhz(CPU_FREQ_IDLE);
+  }
 }
 
 void setup() {
