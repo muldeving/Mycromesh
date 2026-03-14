@@ -3730,11 +3730,16 @@ void interpreter(String msg){
 
     // Reçu par l'esclave : commande à exécuter localement, envoyée par le maître
     // Format : ntidata:<commande>
+    // Seules slvl:1 et slvl:2 sont autorisées sur l'esclave en mode netio.
     if (cmd == "ntidata") {
       if (netioSlave) {
         netioLastActivity = millis();
         String subcmd = msg.substring(8); // retire le préfixe "ntidata:"
-        interpreter(subcmd);
+        if (subcmd == "slvl:1" || subcmd == "slvl:2") {
+          interpreter(subcmd);
+        } else {
+          logN("[NETIO] Commande refusée en mode esclave : " + subcmd);
+        }
       }
     }
 
