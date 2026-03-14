@@ -1867,6 +1867,7 @@ void readsd(bool allrecover){
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
+      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1924,6 +1925,8 @@ void writetosd(){
     // En mode tunnel réseau (IO_NETIO), on sauvegarde le canal physique précédent
     // pour qu'au redémarrage la station revienne dans son mode normal (USB ou BT).
     varptosd += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode);
+    varptosd += ":";
+    varptosd += NETIO_TIMEOUT;
     varptosd += ":";
 
     testFile = SD.open("/p.cfg", FILE_WRITE);
@@ -3066,6 +3069,10 @@ void changepval(String parn, String parv){
     int sl = parv.toInt();
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
     ioOutput("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
+  }
+  if(parn == "NETIO_TIMEOUT"){
+    NETIO_TIMEOUT = parv.toInt();
+    logN("[CONFIG] Timeout tunnel réseau E/S mis à jour : " + String(NETIO_TIMEOUT) + " ms");
   }
 }
 
