@@ -3402,11 +3402,15 @@ void interpreter(String msg){
     }
     if(cmd == "slvl"){
       String arg = getValue(msg, ':', 1);
-      if(arg == "none")    serialLevel = LOG_NONE;
+      if(arg == "none")         serialLevel = LOG_NONE;
       else if(arg == "normal")  serialLevel = LOG_NORMAL;
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      // En mode esclave netio, le niveau est contraint à [1, 2] :
+      // 0 (silencieux) priverait le maître de toute sortie,
+      // 3 (debug) inonderait le tunnel de messages internes.
+      if(netioSlave) serialLevel = constrain(serialLevel, LOG_NORMAL, LOG_VERBOSE);
       ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
@@ -3730,16 +3734,11 @@ void interpreter(String msg){
 
     // Reçu par l'esclave : commande à exécuter localement, envoyée par le maître
     // Format : ntidata:<commande>
-    // Seules slvl:1 et slvl:2 sont autorisées sur l'esclave en mode netio.
     if (cmd == "ntidata") {
       if (netioSlave) {
         netioLastActivity = millis();
         String subcmd = msg.substring(8); // retire le préfixe "ntidata:"
-        if (subcmd == "slvl:1" || subcmd == "slvl:2") {
-          interpreter(subcmd);
-        } else {
-          logN("[NETIO] Commande refusée en mode esclave : " + subcmd);
-        }
+        interpreter(subcmd);
       }
     }
 
