@@ -257,7 +257,7 @@ void startBLE() {
   // sans cela le périphérique n'est pas identifiable par les scanners BLE (LightBlue, nRF Connect…)
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
-  adv->setScanResponse(true);   // inclut le nom dans la réponse de scan active
+  adv->setScanResponseData(true);   // inclut le nom dans la réponse de scan active
   adv->start();
 }
 
