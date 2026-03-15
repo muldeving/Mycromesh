@@ -342,7 +342,7 @@ void ioOutput(const String& msg) {
 void handleSerialInput() {
   switch (ioMode) {
     case IO_USB:
-      if (Serial.available() > 0) { interpreter(Serial.readString()); delay(100); }
+      if (Serial.available() > 0) { String _s = Serial.readString(); _s.trim(); interpreter(_s); delay(100); }
       break;
     case IO_BLUETOOTH:
       if (bleRxReady) {
@@ -3093,7 +3093,52 @@ void interpreter(String msg){
   if(cmd == "write"){
      writetosd();
      logN("[OK] Configuration sauvegardée sur la carte SD");
-  }  
+  }
+  // ── getcfg : lit p.cfg et l'envoie sur le port actif (pour le configurateur web) ──
+  if(cmd == "getcfg"){
+    String cfg;
+    cfg += MAX_PING_AGE;           cfg += ":";
+    cfg += starttimeout;           cfg += ":";
+    cfg += localAddress;           cfg += ":";
+    cfg += DELAY;                  cfg += ":";
+    cfg += MAX_ENTRY_AGE;          cfg += ":";
+    cfg += actiontimerdel;         cfg += ":";
+    cfg += maintmode;              cfg += ":";
+    cfg += stationgateway;         cfg += ":";
+    cfg += TOGATE_COMMAND_TIMEOUT; cfg += ":";
+    cfg += serialLevel;            cfg += ":";
+    cfg += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode); cfg += ":";
+    cfg += NETIO_TIMEOUT;          cfg += ":";
+    cfg += filetimeout;            cfg += ":";
+    cfg += filetxtimeout;          cfg += ":";
+    ioOutput("CFG:" + cfg);
+  }
+  // ── setcfg : reçoit p.cfg depuis le configurateur, applique et sauvegarde ──
+  // Format attendu : setcfg:MAX_PING_AGE:starttimeout:...:filetxtimeout:
+  if(cmd == "setcfg"){
+    int fieldCount = 0;
+    for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
+    if(fieldCount < 14){
+      ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/14 champs)");
+    } else {
+      MAX_PING_AGE           = getValue(msg,':',1).toInt();
+      starttimeout           = getValue(msg,':',2).toInt();
+      localAddress           = getValue(msg,':',3).toInt();
+      DELAY                  = getValue(msg,':',4).toInt();
+      MAX_ENTRY_AGE          = getValue(msg,':',5).toInt();
+      actiontimerdel         = getValue(msg,':',6).toInt();
+      maintmode              = getValue(msg,':',7).toInt();
+      stationgateway         = getValue(msg,':',8).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',9).toInt();
+      { int sl = getValue(msg,':',10).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(msg,':',11).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
+      { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
+      { int ft  = getValue(msg,':',13).toInt(); if(ft  > 0) filetimeout  = ft; }
+      { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
+      writetosd();
+      ioOutput("CFG:OK");
+    }
+  }
   if(cmd == "data"){
     logN(msg.substring(5, msg.length()));
   }

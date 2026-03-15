@@ -312,6 +312,57 @@
       border-top: 1px solid var(--border);
       margin: .25rem 0;
     }
+
+    /* ── Port série ── */
+    .serial-toolbar {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .serial-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background .3s, box-shadow .3s;
+    }
+    .serial-dot.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    #serial-status-text { font-size: .85rem; color: var(--text-muted); }
+    .serial-baud {
+      font-family: var(--mono);
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+    .serial-actions {
+      display: flex;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .btn-connected {
+      background: rgba(76,175,130,.2);
+      color: var(--success);
+      border: 1px solid rgba(76,175,130,.4);
+    }
+    .btn-connected:hover { background: rgba(76,175,130,.3); }
+    #serial-log {
+      font-family: var(--mono);
+      font-size: .76rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .5rem .8rem;
+      max-height: 110px;
+      overflow-y: auto;
+      display: none;
+      line-height: 1.7;
+    }
+    #serial-log .log-err { color: var(--danger); }
+    #serial-log .log-ok  { color: var(--success); }
+    #serial-log .log-info { color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -323,6 +374,25 @@
     <p>Éditeur de configuration p.cfg</p>
   </div>
 </header>
+
+<!-- ── Port série ── -->
+<div class="card">
+  <div class="card-title">🔌 Port série</div>
+  <div id="serial-no-support" style="display:none;margin-bottom:.75rem">
+    <span class="status-err">⚠ Web Serial API non supportée — utilisez Chrome ou Edge (desktop).</span>
+  </div>
+  <div class="serial-toolbar">
+    <button class="btn btn-primary" id="btn-serial-connect" onclick="serialToggle()">⚡ Connecter</button>
+    <span class="serial-dot" id="serial-dot"></span>
+    <span id="serial-status-text">Non connecté</span>
+    <span class="serial-baud">9600 baud</span>
+  </div>
+  <div class="serial-actions" id="serial-actions" style="display:none">
+    <button class="btn btn-secondary" onclick="serialReadCfg()">⬇ Lire p.cfg depuis la station</button>
+    <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
+  </div>
+  <div id="serial-log"></div>
+</div>
 
 <!-- ── Chargement fichier ── -->
 <div class="card">
@@ -755,6 +825,163 @@ function resetAll() {
     if (el) { el.value = p.default; el.classList.remove('invalid'); }
   });
   update();
+}
+
+// ═══════════════════════════════════════════════════
+//  Port série (Web Serial API)
+// ═══════════════════════════════════════════════════
+let _serialPort   = null;
+let _serialWriter = null;
+let _serialReader = null;
+let _serialBuf    = '';
+const _serialCbs  = [];
+
+function serialLog(msg, type = 'info') {
+  const log = document.getElementById('serial-log');
+  log.style.display = 'block';
+  const d = document.createElement('div');
+  d.className = 'log-' + type;
+  d.textContent = msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  while (log.childElementCount > 60) log.removeChild(log.firstChild);
+}
+
+function _serialUpdateUI(connected) {
+  document.getElementById('serial-dot').classList.toggle('on', connected);
+  document.getElementById('serial-status-text').textContent = connected ? 'Connecté' : 'Non connecté';
+  const btn = document.getElementById('btn-serial-connect');
+  btn.textContent = connected ? '⏏ Déconnecter' : '⚡ Connecter';
+  btn.className   = connected ? 'btn btn-connected' : 'btn btn-primary';
+  document.getElementById('serial-actions').style.display = connected ? 'flex' : 'none';
+}
+
+async function _serialReadLoop() {
+  const dec = new TextDecoder();
+  try {
+    while (_serialPort) {
+      const reader = _serialPort.readable.getReader();
+      _serialReader = reader;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          _serialBuf += dec.decode(value, { stream: true });
+          const lines = _serialBuf.split('\n');
+          _serialBuf = lines.pop();
+          for (const raw of lines) {
+            const line = raw.replace(/\r/g, '').trim();
+            if (!line) continue;
+            // Dispatch to waiting callbacks first
+            let dispatched = false;
+            for (let i = 0; i < _serialCbs.length; i++) {
+              if (_serialCbs[i](line)) { _serialCbs.splice(i, 1); dispatched = true; break; }
+            }
+            if (!dispatched) serialLog(line);
+          }
+        }
+      } finally { reader.releaseLock(); }
+      break;
+    }
+  } catch(e) {
+    if (_serialPort) serialLog('⚠ ' + e.message, 'err');
+  }
+}
+
+function _waitForPrefix(prefix, timeout = 7000) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      const i = _serialCbs.findIndex(cb => cb._p === prefix);
+      if (i !== -1) _serialCbs.splice(i, 1);
+      reject(new Error('Timeout — pas de réponse du firmware'));
+    }, timeout);
+    const cb = line => {
+      if (line.startsWith(prefix)) { clearTimeout(t); resolve(line); return true; }
+      return false;
+    };
+    cb._p = prefix;
+    _serialCbs.push(cb);
+  });
+}
+
+async function _serialSend(text) {
+  if (!_serialWriter) throw new Error('Port non connecté');
+  await _serialWriter.write(new TextEncoder().encode(text));
+}
+
+async function serialToggle() {
+  if (_serialPort) await _serialDisconnect();
+  else             await _serialConnect();
+}
+
+async function _serialConnect() {
+  if (!('serial' in navigator)) {
+    document.getElementById('serial-no-support').style.display = 'block';
+    return;
+  }
+  try {
+    _serialPort = await navigator.serial.requestPort();
+    await _serialPort.open({ baudRate: 9600 });
+    _serialWriter = _serialPort.writable.getWriter();
+    _serialUpdateUI(true);
+    serialLog('✓ Port ouvert à 9600 baud', 'ok');
+    _serialReadLoop();
+  } catch(e) {
+    if (e.name !== 'NotSelectedError') serialLog('⚠ ' + e.message, 'err');
+    _serialPort = null; _serialWriter = null;
+  }
+}
+
+async function _serialDisconnect() {
+  try {
+    if (_serialReader) { await _serialReader.cancel(); _serialReader = null; }
+    if (_serialWriter) { _serialWriter.releaseLock(); _serialWriter = null; }
+    if (_serialPort)   { await _serialPort.close();   _serialPort   = null; }
+  } catch(e) { /* ignore cleanup errors */ }
+  _serialUpdateUI(false);
+  serialLog('— Déconnecté', 'info');
+}
+
+function _serialSetBtns(disabled) {
+  document.querySelectorAll('#serial-actions .btn').forEach(b => b.disabled = disabled);
+}
+
+async function serialReadCfg() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    serialLog('→ getcfg');
+    await _serialSend('getcfg\n');
+    const line = await _waitForPrefix('CFG:');
+    const body = line.slice(4);
+    if (body.startsWith('ERR:')) { serialLog('⚠ ' + body.slice(4), 'err'); return; }
+    const result = parseCfg(body);
+    if (!result.ok) { serialLog('⚠ ' + result.msg, 'err'); return; }
+    Object.assign(state, result.data);
+    PARAMS.forEach(p => { const el = document.getElementById('param-' + p.key); if (el) el.value = state[p.key]; });
+    update();
+    document.getElementById('file-status').innerHTML = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
+    document.getElementById('raw-preview').style.display = 'block';
+    document.getElementById('raw-preview').textContent = '> ' + body;
+    serialLog('✓ Configuration chargée (' + Object.keys(result.data).length + ' paramètres)', 'ok');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
+}
+
+async function serialWriteCfg() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    const cfg = buildCfgString();
+    serialLog('→ setcfg:' + cfg.slice(0, 28) + '…');
+    await _serialSend('setcfg:' + cfg + '\n');
+    const line = await _waitForPrefix('CFG:');
+    if (line === 'CFG:OK') serialLog('✓ Configuration enregistrée sur la station', 'ok');
+    else serialLog('⚠ ' + line.slice(4), 'err');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
 }
 
 // ═══════════════════════════════════════════════════
