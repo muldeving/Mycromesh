@@ -45,25 +45,12 @@
       gap: 1rem;
     }
     .logo {
-      width: 44px; height: 44px;
-      background: linear-gradient(135deg, var(--accent), #9b6df5);
-      border-radius: var(--radius);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.4rem;
+      height: 44px;
       flex-shrink: 0;
+      filter: brightness(0) invert(1);
     }
     header h1 { font-size: 1.5rem; font-weight: 700; }
     header p { color: var(--text-muted); font-size: .85rem; margin-top: .15rem; }
-    .badge {
-      margin-left: auto;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: .25rem .75rem;
-      font-size: .75rem;
-      color: var(--text-muted);
-      white-space: nowrap;
-    }
 
     /* ── Card ── */
     .card {
@@ -330,12 +317,11 @@
 <body>
 
 <header>
-  <div class="logo">⬡</div>
+  <img class="logo" src="../MycroMeshwt.svg" alt="Mycromesh logo">
   <div>
     <h1>Mycromesh</h1>
     <p>Éditeur de configuration p.cfg</p>
   </div>
-  <span class="badge">v1.3.0</span>
 </header>
 
 <!-- ── Chargement fichier ── -->
