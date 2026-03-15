@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mycromesh – Éditeur p.cfg</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3250;
+      --accent: #5b8af5;
+      --accent-hover: #7aa3ff;
+      --success: #4caf82;
+      --warning: #f5a623;
+      --danger: #e05252;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --radius: 8px;
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Header ── */
+    header {
+      width: 100%;
+      max-width: 860px;
+      margin-bottom: 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .logo {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), #9b6df5);
+      border-radius: var(--radius);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header p { color: var(--text-muted); font-size: .85rem; margin-top: .15rem; }
+    .badge {
+      margin-left: auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: .25rem .75rem;
+      font-size: .75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Card ── */
+    .card {
+      width: 100%;
+      max-width: 860px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .card-title {
+      font-size: .8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    /* ── File drop zone ── */
+    #dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #dropzone:hover, #dropzone.drag-over {
+      border-color: var(--accent);
+      background: rgba(91,138,245,.05);
+    }
+    #dropzone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    #dropzone .dz-icon { font-size: 2rem; margin-bottom: .5rem; }
+    #dropzone p { color: var(--text-muted); font-size: .9rem; }
+    #dropzone strong { color: var(--accent); }
+    #file-status {
+      margin-top: .75rem;
+      font-size: .82rem;
+      min-height: 1.2em;
+    }
+    .status-ok  { color: var(--success); }
+    .status-err { color: var(--danger); }
+
+    /* ── Raw preview ── */
+    #raw-preview {
+      font-family: var(--mono);
+      font-size: .78rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .75rem 1rem;
+      color: var(--warning);
+      word-break: break-all;
+      display: none;
+      margin-top: .75rem;
+    }
+
+    /* ── Parameter grid ── */
+    .params-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 600px) { .params-grid { grid-template-columns: 1fr; } }
+
+    .param-group {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+    .param-label {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+    }
+    .param-name {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: .82rem;
+      background: rgba(91,138,245,.1);
+      padding: .1rem .35rem;
+      border-radius: 4px;
+    }
+    .param-desc {
+      font-size: .78rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    .param-input-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .param-input-row input,
+    .param-input-row select {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .9rem;
+      padding: .45rem .65rem;
+      outline: none;
+      transition: border-color .2s;
+      min-width: 0;
+    }
+    .param-input-row input:focus,
+    .param-input-row select:focus { border-color: var(--accent); }
+    .param-input-row input.invalid { border-color: var(--danger); }
+    .unit {
+      font-size: .75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .reset-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: .3rem .5rem;
+      font-size: .8rem;
+      transition: border-color .2s, color .2s;
+      flex-shrink: 0;
+    }
+    .reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Output section ── */
+    #output-raw {
+      font-family: var(--mono);
+      font-size: .82rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .75rem 1rem;
+      color: var(--warning);
+      word-break: break-all;
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+    .output-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    .output-table th {
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      padding: .35rem .5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .output-table td {
+      padding: .4rem .5rem;
+      border-bottom: 1px solid rgba(46,50,80,.5);
+    }
+    .output-table td:first-child { font-family: var(--mono); color: var(--accent); }
+    .output-table td:nth-child(2) { font-family: var(--mono); }
+    .output-table td:last-child { color: var(--text-muted); }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      padding: .55rem 1.1rem;
+      border-radius: var(--radius);
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { opacity: .88; }
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-danger {
+      background: rgba(224,82,82,.15);
+      color: var(--danger);
+      border: 1px solid rgba(224,82,82,.3);
+    }
+    .btn-danger:hover { background: rgba(224,82,82,.25); }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: var(--success);
+      color: #fff;
+      padding: .65rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: .88rem;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .3s;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; }
+
+    /* ── Tooltip ── */
+    [data-tip] { position: relative; cursor: help; }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: #fff;
+      padding: .35rem .65rem;
+      border-radius: 5px;
+      font-size: .72rem;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+    [data-tip]:hover::after { opacity: 1; }
+
+    /* ── Divider ── */
+    .section-sep {
+      grid-column: 1 / -1;
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: .25rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬡</div>
+  <div>
+    <h1>Mycromesh</h1>
+    <p>Éditeur de configuration p.cfg</p>
+  </div>
+  <span class="badge">v1.3.0</span>
+</header>
+
+<!-- ── Chargement fichier ── -->
+<div class="card">
+  <div class="card-title">📂 Charger un fichier p.cfg existant</div>
+  <div id="dropzone">
+    <input type="file" id="file-input" accept=".cfg,text/plain" />
+    <div class="dz-icon">📄</div>
+    <p>Glissez-déposez votre fichier <strong>p.cfg</strong> ici<br>ou cliquez pour choisir</p>
+  </div>
+  <div id="file-status"></div>
+  <div id="raw-preview"></div>
+</div>
+
+<!-- ── Paramètres ── -->
+<div class="card">
+  <div class="card-title">⚙️ Paramètres de configuration</div>
+  <div class="params-grid" id="params-grid"></div>
+</div>
+
+<!-- ── Sortie ── -->
+<div class="card">
+  <div class="card-title">📋 Contenu généré du fichier p.cfg</div>
+  <div id="output-raw"></div>
+  <table class="output-table">
+    <thead>
+      <tr>
+        <th>Paramètre</th>
+        <th>Valeur</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody id="output-table-body"></tbody>
+  </table>
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="downloadFile()">⬇ Télécharger p.cfg</button>
+    <button class="btn btn-secondary" onclick="copyToClipboard()">⎘ Copier le contenu</button>
+    <button class="btn btn-danger" onclick="resetAll()">↺ Réinitialiser les défauts</button>
+  </div>
+</div>
+
+<div id="toast">✓ Copié dans le presse-papiers !</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+//  Définition des paramètres (ordre = ordre dans p.cfg)
+// ═══════════════════════════════════════════════════
+const PARAMS = [
+  {
+    key: 'localAddress',
+    label: 'Adresse locale',
+    desc: 'Adresse unique de cette station dans le réseau mesh.',
+    type: 'int',
+    default: 61,
+    min: 0,
+    max: 255,
+    unit: '',
+    tip: 'Doit être unique parmi toutes les stations'
+  },
+  {
+    key: 'stationgateway',
+    label: 'Adresse passerelle',
+    desc: 'Adresse de la station faisant office de gateway.',
+    type: 'int',
+    default: 1,
+    min: 0,
+    max: 255,
+    unit: '',
+    tip: 'La station gateway relaye les messages vers l\'extérieur'
+  },
+  {
+    key: 'maintmode',
+    label: 'Mode maintenance',
+    desc: 'Désactive le deep sleep pour faciliter la maintenance.',
+    type: 'bool',
+    default: 1,
+    tip: 'Activer pour empêcher la mise en veille automatique'
+  },
+  {
+    key: 'ioMode',
+    label: 'Mode I/O',
+    desc: 'Canal de communication pour les échanges série.',
+    type: 'select',
+    options: [
+      { value: 0, label: '0 – USB (Serial)' },
+      { value: 1, label: '1 – BLE Bluetooth' },
+      { value: 2, label: '2 – NetIO (tunnel réseau)' }
+    ],
+    default: 0,
+    tip: 'USB = câble, BLE = sans-fil Bluetooth, NetIO = tunnel LoRa'
+  },
+  {
+    key: 'serialLevel',
+    label: 'Niveau de log',
+    desc: 'Verbosité des messages de débogage série.',
+    type: 'select',
+    options: [
+      { value: 0, label: '0 – Silencieux' },
+      { value: 1, label: '1 – Normal' },
+      { value: 2, label: '2 – Verbeux' },
+      { value: 3, label: '3 – Debug complet' }
+    ],
+    default: 1,
+    tip: 'Plus le niveau est élevé, plus il y a de messages'
+  },
+  {
+    key: 'actiontimerdel',
+    label: 'Délai inactivité',
+    desc: 'Délai d\'inactivité avant passage en deep sleep.',
+    type: 'int',
+    default: 30,
+    min: 1,
+    max: 3600,
+    unit: 's',
+    tip: 'Ignoré si le mode maintenance est activé'
+  },
+  {
+    key: 'MAX_PING_AGE',
+    label: 'Âge max ping',
+    desc: 'Délai avant expiration / relance d\'un ping réseau.',
+    type: 'int',
+    default: 20000,
+    min: 1000,
+    max: 300000,
+    unit: 'ms',
+    tip: 'Temps d\'attente avant de retenter ou supprimer un ping'
+  },
+  {
+    key: 'MAX_ENTRY_AGE',
+    label: 'Âge max entrée',
+    desc: 'Timeout d\'attente d\'un acquittement de message.',
+    type: 'int',
+    default: 20000,
+    min: 1000,
+    max: 300000,
+    unit: 'ms',
+    tip: 'Délai avant d\'abandonner un message non acquitté'
+  },
+  {
+    key: 'starttimeout',
+    label: 'Timeout démarrage',
+    desc: 'Durée maximale de la procédure de démarrage.',
+    type: 'int',
+    default: 15000,
+    min: 1000,
+    max: 120000,
+    unit: 'ms',
+    tip: 'Temps alloué à l\'initialisation complète'
+  },
+  {
+    key: 'DELAY',
+    label: 'Délai déduplication',
+    desc: 'Durée de rétention des messages pour éviter les doublons.',
+    type: 'int',
+    default: 3600000,
+    min: 60000,
+    max: 86400000,
+    unit: 'ms',
+    tip: 'Un message identique reçu dans ce délai sera ignoré'
+  },
+  {
+    key: 'TOGATE_COMMAND_TIMEOUT',
+    label: 'Timeout commande gateway',
+    desc: 'Délai max pour une commande envoyée à la gateway.',
+    type: 'int',
+    default: 60000,
+    min: 5000,
+    max: 600000,
+    unit: 'ms',
+    tip: 'Au-delà, la commande est mise en cache pour retry'
+  },
+  {
+    key: 'NETIO_TIMEOUT',
+    label: 'Timeout NetIO',
+    desc: 'Durée maximale du tunnel Network I/O.',
+    type: 'int',
+    default: 30000,
+    min: 5000,
+    max: 600000,
+    unit: 'ms',
+    tip: 'Ferme le tunnel après cette durée d\'inactivité'
+  },
+  {
+    key: 'filetimeout',
+    label: 'Timeout réception fichier',
+    desc: 'Durée maximale pour la réception d\'un fichier.',
+    type: 'int',
+    default: 300,
+    min: 10,
+    max: 3600,
+    unit: 's',
+    tip: 'Abandon du téléchargement au-delà de ce délai'
+  },
+  {
+    key: 'filetxtimeout',
+    label: 'Timeout émission fichier',
+    desc: 'Durée maximale pour l\'émission d\'un fichier.',
+    type: 'int',
+    default: 60,
+    min: 5,
+    max: 3600,
+    unit: 's',
+    tip: 'Abandon de l\'envoi au-delà de ce délai'
+  }
+];
+
+// Ordre des valeurs dans p.cfg (index position)
+const CFG_ORDER = [
+  'MAX_PING_AGE',       // 0
+  'starttimeout',       // 1
+  'localAddress',       // 2
+  'DELAY',              // 3
+  'MAX_ENTRY_AGE',      // 4
+  'actiontimerdel',     // 5
+  'maintmode',          // 6
+  'stationgateway',     // 7
+  'TOGATE_COMMAND_TIMEOUT', // 8
+  'serialLevel',        // 9
+  'ioMode',             // 10
+  'NETIO_TIMEOUT',      // 11
+  'filetimeout',        // 12
+  'filetxtimeout'       // 13
+];
+
+// État courant
+const state = {};
+PARAMS.forEach(p => { state[p.key] = p.default; });
+
+// ═══════════════════════════════════════════════════
+//  Construction de l'interface
+// ═══════════════════════════════════════════════════
+function buildUI() {
+  const grid = document.getElementById('params-grid');
+  grid.innerHTML = '';
+
+  PARAMS.forEach(p => {
+    const group = document.createElement('div');
+    group.className = 'param-group';
+
+    // Label
+    const labelEl = document.createElement('div');
+    labelEl.className = 'param-label';
+    labelEl.innerHTML = `<span>${p.label}</span><code class="param-name">${p.key}</code>`;
+    group.appendChild(labelEl);
+
+    // Description
+    const desc = document.createElement('div');
+    desc.className = 'param-desc';
+    desc.textContent = p.desc;
+    group.appendChild(desc);
+
+    // Input row
+    const row = document.createElement('div');
+    row.className = 'param-input-row';
+
+    let inputEl;
+
+    if (p.type === 'bool') {
+      inputEl = document.createElement('select');
+      inputEl.innerHTML = '<option value="1">1 – Activé (true)</option><option value="0">0 – Désactivé (false)</option>';
+      inputEl.value = state[p.key];
+    } else if (p.type === 'select') {
+      inputEl = document.createElement('select');
+      p.options.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        inputEl.appendChild(opt);
+      });
+      inputEl.value = state[p.key];
+    } else {
+      inputEl = document.createElement('input');
+      inputEl.type = 'number';
+      if (p.min !== undefined) inputEl.min = p.min;
+      if (p.max !== undefined) inputEl.max = p.max;
+      inputEl.value = state[p.key];
+      inputEl.addEventListener('input', () => validate(inputEl, p));
+    }
+
+    inputEl.id = 'param-' + p.key;
+    inputEl.title = p.tip || '';
+    inputEl.addEventListener('change', () => {
+      state[p.key] = inputEl.type === 'number' ? Number(inputEl.value) : Number(inputEl.value);
+      update();
+    });
+    inputEl.addEventListener('input', () => {
+      state[p.key] = inputEl.type === 'number' ? Number(inputEl.value) : Number(inputEl.value);
+      update();
+    });
+    row.appendChild(inputEl);
+
+    if (p.unit) {
+      const unitEl = document.createElement('span');
+      unitEl.className = 'unit';
+      unitEl.textContent = p.unit;
+      row.appendChild(unitEl);
+    }
+
+    // Bouton reset
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'reset-btn';
+    resetBtn.textContent = '↺';
+    resetBtn.title = `Défaut : ${p.default}`;
+    resetBtn.addEventListener('click', () => {
+      state[p.key] = p.default;
+      const el = document.getElementById('param-' + p.key);
+      el.value = p.default;
+      el.classList.remove('invalid');
+      update();
+    });
+    row.appendChild(resetBtn);
+
+    group.appendChild(row);
+    grid.appendChild(group);
+  });
+
+  update();
+}
+
+function validate(input, p) {
+  const v = Number(input.value);
+  const valid = !isNaN(v) && (p.min === undefined || v >= p.min) && (p.max === undefined || v <= p.max);
+  input.classList.toggle('invalid', !valid);
+}
+
+// ═══════════════════════════════════════════════════
+//  Génération du contenu p.cfg
+// ═══════════════════════════════════════════════════
+function buildCfgString() {
+  return CFG_ORDER.map(k => state[k]).join(':') + ':';
+}
+
+function update() {
+  const raw = buildCfgString();
+  document.getElementById('output-raw').textContent = raw;
+
+  const tbody = document.getElementById('output-table-body');
+  tbody.innerHTML = '';
+  CFG_ORDER.forEach((k, i) => {
+    const p = PARAMS.find(x => x.key === k);
+    const tr = document.createElement('tr');
+    const unit = p && p.unit ? ' ' + p.unit : '';
+    const desc = p ? p.desc : '';
+    tr.innerHTML = `<td>${k}</td><td>${state[k]}${unit}</td><td>${desc}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ═══════════════════════════════════════════════════
+//  Lecture du fichier p.cfg
+// ═══════════════════════════════════════════════════
+function parseCfg(text) {
+  const clean = text.trim().replace(/\r/g, '');
+  const values = clean.split(':').filter(v => v !== '');
+
+  if (values.length < CFG_ORDER.length) {
+    return { ok: false, msg: `Format invalide : ${values.length} valeur(s) trouvée(s), ${CFG_ORDER.length} attendues.` };
+  }
+
+  const result = {};
+  CFG_ORDER.forEach((k, i) => {
+    const v = parseInt(values[i], 10);
+    result[k] = isNaN(v) ? PARAMS.find(p => p.key === k).default : v;
+  });
+  return { ok: true, data: result, raw: clean };
+}
+
+function loadFile(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('file-status');
+  const previewEl = document.getElementById('raw-preview');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    const result = parseCfg(text);
+
+    previewEl.style.display = 'block';
+    previewEl.textContent = '> ' + text.trim();
+
+    if (!result.ok) {
+      statusEl.innerHTML = `<span class="status-err">⚠ ${result.msg}</span>`;
+      return;
+    }
+
+    Object.assign(state, result.data);
+
+    // Mettre à jour les champs
+    PARAMS.forEach(p => {
+      const el = document.getElementById('param-' + p.key);
+      if (el) el.value = state[p.key];
+    });
+    update();
+
+    statusEl.innerHTML = `<span class="status-ok">✓ Fichier chargé : <strong>${file.name}</strong> (${CFG_ORDER.length} paramètres)</span>`;
+  };
+  reader.onerror = () => {
+    statusEl.innerHTML = `<span class="status-err">⚠ Erreur de lecture du fichier.</span>`;
+  };
+  reader.readAsText(file);
+}
+
+// ═══════════════════════════════════════════════════
+//  Actions
+// ═══════════════════════════════════════════════════
+function downloadFile() {
+  const content = buildCfgString();
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'p.cfg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function copyToClipboard() {
+  navigator.clipboard.writeText(buildCfgString()).then(() => {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2200);
+  });
+}
+
+function resetAll() {
+  PARAMS.forEach(p => {
+    state[p.key] = p.default;
+    const el = document.getElementById('param-' + p.key);
+    if (el) { el.value = p.default; el.classList.remove('invalid'); }
+  });
+  update();
+}
+
+// ═══════════════════════════════════════════════════
+//  Drag & drop + file input
+// ═══════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  buildUI();
+
+  const dz = document.getElementById('dropzone');
+  const fi = document.getElementById('file-input');
+
+  fi.addEventListener('change', () => loadFile(fi.files[0]));
+
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+});
+</script>
+</body>
+</html>
