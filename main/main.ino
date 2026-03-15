@@ -71,10 +71,19 @@ long TOGATE_COMMAND_TIMEOUT = 60000;
 int serialLevel = 1;
 
 // Mode E/S : sélectionne le canal actif pour ioOutput / handleSerialInput
-// IO_LORA (2) sera ajouté lors de l'intégration de la troisième sortie
 #define IO_USB       0
 #define IO_BLUETOOTH 1
+#define IO_NETIO     2   // tunnel réseau : entrée/sortie via une autre station du maillage
 int ioMode = IO_USB;
+
+// Variables du tunnel réseau E/S (mode IO_NETIO)
+bool          netioMaster       = false;   // cette station est le maître du tunnel
+bool          netioSlave        = false;   // cette station est l'esclave du tunnel
+int           netioRemote       = -1;      // adresse de la station distante
+unsigned long netioLastActivity = 0;       // horodatage de la dernière activité (millis)
+long          NETIO_TIMEOUT     = 30000;   // ms sans activité avant fermeture automatique du tunnel
+int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegardé avant activation du tunnel
+bool          ntioPrevMaintMode = true;    // état maintmode sauvegardé avant activation du tunnel
 
 // variables d'état
 
@@ -268,6 +277,36 @@ void stopBLE() {
 }
 // --------------------------------------
 
+// --- Tunnel réseau E/S (netio) ---
+
+// Affiche un message sur le canal physique précédent (USB ou BLE) du maître,
+// utilisé pour afficher les réponses qui arrivent de l'esclave.
+void netioDisplay(const String& msg) {
+  switch (ntioPrevIoMode) {
+    case IO_USB:
+      Serial.println(msg);
+      break;
+    case IO_BLUETOOTH:
+      if (bleConnected && bleTxChar) {
+        String line = msg + "\n";
+        bleTxChar->setValue(line.c_str());
+        bleTxChar->notify();
+      }
+      break;
+  }
+}
+
+// Ferme le tunnel réseau E/S et restaure l'état précédent des deux côtés.
+void closeNetioTunnel() {
+  netioMaster       = false;
+  netioSlave        = false;
+  ioMode            = ntioPrevIoMode;
+  maintmode         = ntioPrevMaintMode;
+  netioRemote       = -1;
+  netioLastActivity = 0;
+}
+// ---------------------------------
+
 // --- Couche d'abstraction E/S ---
 // Centralise toutes les sorties texte du firmware.
 // Pour ajouter un canal, incrémenter IO_* et ajouter un case ici.
@@ -282,6 +321,18 @@ void ioOutput(const String& msg) {
         bleTxChar->setValue(line.c_str());
         bleTxChar->notify();
       }
+      break;
+    case IO_NETIO:
+      if (netioSlave && netioRemote >= 0) {
+        // Esclave : transmet la sortie au maître via le réseau maillé (send)
+        String rsp = "send:";
+        rsp += netioRemote;
+        rsp += ":ntirsp:";
+        rsp += msg;
+        interpreter(rsp);
+        netioLastActivity = millis();
+      }
+      // Maître : supprime sa propre sortie — seules les réponses de l'esclave sont affichées
       break;
   }
 }
@@ -301,6 +352,40 @@ void handleSerialInput() {
         interpreter(cmd);
         delay(100);
       }
+      break;
+    case IO_NETIO:
+      if (netioMaster) {
+        // Le maître lit depuis son canal physique précédent et transmet à l'esclave
+        String inputCmd = "";
+        bool hasInput = false;
+        if (ntioPrevIoMode == IO_USB) {
+          if (Serial.available() > 0) { inputCmd = Serial.readString(); hasInput = true; }
+        } else if (ntioPrevIoMode == IO_BLUETOOTH) {
+          if (bleRxReady) {
+            bleRxReady = false;
+            inputCmd = bleRxBuffer;
+            bleRxBuffer = "";
+            hasInput = true;
+          }
+        }
+        if (hasInput) {
+          inputCmd.trim();
+          if (inputCmd.length() > 0) {
+            if (inputCmd == "exit") {
+              // Fermeture propre du tunnel : signaler l'esclave puis restaurer l'état
+              int savedRemote = netioRemote;
+              closeNetioTunnel();
+              interpreter("trsp:" + String(savedRemote) + ":nticlose");
+              ioOutput("[NETIO] Tunnel fermé proprement");
+            } else {
+              // Transmettre la commande à l'esclave via le réseau maillé (send)
+              netioLastActivity = millis();
+              interpreter("send:" + String(netioRemote) + ":ntidata:" + inputCmd);
+            }
+          }
+        }
+      }
+      // L'esclave ne lit pas d'entrée locale : ses commandes arrivent via ntidata réseau
       break;
   }
 }
@@ -1782,6 +1867,7 @@ void readsd(bool allrecover){
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
+      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1836,7 +1922,11 @@ void writetosd(){
     varptosd += ":";
     varptosd += serialLevel;
     varptosd += ":";
-    varptosd += ioMode;
+    // En mode tunnel réseau (IO_NETIO), on sauvegarde le canal physique précédent
+    // pour qu'au redémarrage la station revienne dans son mode normal (USB ou BT).
+    varptosd += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode);
+    varptosd += ":";
+    varptosd += NETIO_TIMEOUT;
     varptosd += ":";
 
     testFile = SD.open("/p.cfg", FILE_WRITE);
@@ -2365,7 +2455,7 @@ void cpuTurbo() {
 }
 
 void cpuIdle() {
-  if (ioMode == IO_BLUETOOTH){
+  if (ioMode == IO_BLUETOOTH || (ioMode == IO_NETIO && ntioPrevIoMode == IO_BLUETOOTH)){
     setCpuFrequencyMhz(CPU_FREQ_BLE);
   }
   else{
@@ -2475,6 +2565,18 @@ void loop() {
       lastBrdfSeq = -1;
       logV("diff:timeout rx");
     }
+  }
+
+  // --- Timeout du tunnel réseau E/S ---
+  // Si aucun échange ne transite pendant NETIO_TIMEOUT ms, on ferme le tunnel proprement.
+  if ((netioMaster || netioSlave) && netioLastActivity > 0 &&
+      (millis() - netioLastActivity > (unsigned long)NETIO_TIMEOUT)) {
+    int  savedRemote = netioRemote;
+    bool wasMaster   = netioMaster;
+    closeNetioTunnel();
+    ioOutput("[NETIO] Timeout — tunnel fermé (inactivité)");
+    // Notifier la station distante via trsp (paquet de fin fiable)
+    interpreter("trsp:" + String(savedRemote) + ":nticlose");
   }
 
   if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
@@ -2968,6 +3070,10 @@ void changepval(String parn, String parv){
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
     ioOutput("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
   }
+  if(parn == "NETIO_TIMEOUT"){
+    NETIO_TIMEOUT = parv.toInt();
+    logN("[CONFIG] Timeout tunnel réseau E/S mis à jour : " + String(NETIO_TIMEOUT) + " ms");
+  }
 }
 
 void interpreter(String msg){  
@@ -3296,11 +3402,15 @@ void interpreter(String msg){
     }
     if(cmd == "slvl"){
       String arg = getValue(msg, ':', 1);
-      if(arg == "none")    serialLevel = LOG_NONE;
+      if(arg == "none")         serialLevel = LOG_NONE;
       else if(arg == "normal")  serialLevel = LOG_NORMAL;
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      // En mode esclave netio, le niveau est contraint à [1, 2] :
+      // 0 (silencieux) priverait le maître de toute sortie,
+      // 3 (debug) inonderait le tunnel de messages internes.
+      if(netioSlave) serialLevel = constrain(serialLevel, LOG_NORMAL, LOG_VERBOSE);
       ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
@@ -3319,7 +3429,7 @@ void interpreter(String msg){
         }
         ioOutput("[IO] Mode Bluetooth activé — appareil: Mycromesh-" + String(localAddress));
       } else {
-        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt");
+        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt  (netio:<addr> pour le tunnel réseau)");
       }
     }
     if(cmd == "cout"){
@@ -3564,6 +3674,89 @@ void interpreter(String msg){
         lastBrdfSeq = -1;
         compileFile(filePath, -1, 0);  // origin=-1 : pas de feok à envoyer
         logV("diff:rx done");
+      }
+    }
+
+    // ================================================================
+    // MODE RÉSEAU E/S (netio) — tunnel maître/esclave via le maillage
+    // ================================================================
+
+    // Commande utilisateur : ouvre un tunnel vers l'esclave <addr>
+    // Format : netio:<addr>
+    if (cmd == "netio") {
+      int slaveAddr = getValue(msg, ':', 1).toInt();
+      if (slaveAddr <= 0) {
+        ioOutput("[NETIO] Erreur : adresse esclave invalide");
+      } else if (netioMaster || netioSlave) {
+        ioOutput("[NETIO] Un tunnel réseau est déjà actif");
+      } else {
+        ioOutput("[NETIO] Ouverture du tunnel vers le noeud #" + String(slaveAddr) + "...");
+        ntioPrevIoMode    = ioMode;
+        ntioPrevMaintMode = maintmode;
+        netioRemote       = slaveAddr;
+        maintmode         = true;
+        netioLastActivity = millis();
+        // Paquet d'initialisation envoyé via trsp (fiable, avec accusé de réception)
+        interpreter("trsp:" + String(slaveAddr) + ":ntiopen:" + String(localAddress));
+        // Passer en mode maître après l'envoi pour ne pas supprimer les logs de l'init
+        netioMaster = true;
+        ioMode      = IO_NETIO;
+      }
+    }
+
+    // Reçu par l'esclave : le maître demande l'ouverture du tunnel
+    // Format : ntiopen:<master_addr>
+    if (cmd == "ntiopen") {
+      int masterAddr = getValue(msg, ':', 1).toInt();
+      if (!netioMaster && !netioSlave && masterAddr > 0) {
+        ntioPrevIoMode    = ioMode;
+        ntioPrevMaintMode = maintmode;
+        netioRemote       = masterAddr;
+        maintmode         = true;
+        netioLastActivity = millis();
+        logN("[NETIO] Mode esclave activé — maître : noeud #" + String(masterAddr));
+        // Confirmer au maître via trsp (fiable) avant de basculer le mode
+        interpreter("trsp:" + String(masterAddr) + ":ntiok");
+        // Basculer en mode esclave
+        netioSlave = true;
+        ioMode     = IO_NETIO;
+      }
+    }
+
+    // Reçu par le maître : l'esclave confirme que le tunnel est établi
+    // Format : ntiok
+    if (cmd == "ntiok") {
+      if (netioMaster && netioRemote >= 0) {
+        netioLastActivity = millis();
+        netioDisplay("[NETIO] Tunnel ouvert avec le noeud #" + String(netioRemote) + " — tapez 'exit' pour fermer");
+      }
+    }
+
+    // Reçu par l'esclave : commande à exécuter localement, envoyée par le maître
+    // Format : ntidata:<commande>
+    if (cmd == "ntidata") {
+      if (netioSlave) {
+        netioLastActivity = millis();
+        String subcmd = msg.substring(8); // retire le préfixe "ntidata:"
+        interpreter(subcmd);
+      }
+    }
+
+    // Reçu par le maître : réponse de l'esclave à afficher localement
+    // Format : ntirsp:<message>
+    if (cmd == "ntirsp") {
+      if (netioMaster) {
+        netioLastActivity = millis();
+        netioDisplay(msg.substring(7)); // retire le préfixe "ntirsp:"
+      }
+    }
+
+    // Reçu par l'un ou l'autre : fermeture du tunnel (depuis timeout ou commande distante)
+    // Format : nticlose
+    if (cmd == "nticlose") {
+      if (netioMaster || netioSlave) {
+        closeNetioTunnel();
+        ioOutput("[NETIO] Tunnel réseau fermé");
       }
     }
 }
