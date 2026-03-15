@@ -1224,40 +1224,53 @@ async function startFlash() {
       writeLine(d)   { if (d && d.trim()) flashLog(d.trim()); },
       write(d)       { /* fragments bruts de progression — ignorés */ }
     };
-    const transport = new Transport(port, false);
-    const loader    = new ESPLoader({ transport, baudrate: 921600, terminal: espTerminal, debugLogging: false });
+    // transport déclaré ici pour être accessible dans le finally
+    let transport = new Transport(port, false);
+    let loader    = new ESPLoader({ transport, baudrate: 921600, terminal: espTerminal, debugLogging: false });
 
-    const chip = await loader.main();
-    flashLog('✓ Puce détectée : ' + chip, 'ok');
+    try {
+      const chip = await loader.main();
+      flashLog('✓ Puce détectée : ' + chip, 'ok');
 
-    // ── 5. Écriture flash ────────────────────────────────────────────────────
-    const addr = parseInt(document.getElementById('flash-addr').value, 16);
-    if (isNaN(addr)) throw new Error('Adresse de flash invalide — utilisez le format hexadécimal : 0x10000');
-    flashLog('Écriture à 0x' + addr.toString(16).toUpperCase() + '…');
+      // ── 5. Écriture flash ──────────────────────────────────────────────────
+      const addr = parseInt(document.getElementById('flash-addr').value, 16);
+      if (isNaN(addr)) throw new Error('Adresse de flash invalide — utilisez le format hexadécimal : 0x10000');
+      flashLog('Écriture à 0x' + addr.toString(16).toUpperCase() + '…');
 
-    await loader.writeFlash({
-      fileArray : [{ data: binaryStr, address: addr }],
-      flashSize : 'keep',
-      flashMode : 'keep',
-      flashFreq : 'keep',
-      eraseAll  : false,
-      compress  : true,
-      reportProgress(fileIndex, written, total) {
-        const pct   = (written / total) * 100;
-        const label = Math.round(pct) + '%  (' + (written / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' Ko)';
-        _setFlashProgress(pct, label);
-      },
-      calculateMD5Hash: null,
-    });
+      await loader.writeFlash({
+        fileArray : [{ data: binaryStr, address: addr }],
+        flashSize : 'keep',
+        flashMode : 'keep',
+        flashFreq : 'keep',
+        eraseAll  : false,
+        compress  : true,
+        reportProgress(fileIndex, written, total) {
+          const pct   = (written / total) * 100;
+          const label = Math.round(pct) + '%  (' + (written / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' Ko)';
+          _setFlashProgress(pct, label);
+        },
+        calculateMD5Hash: null,
+      });
 
-    _setFlashProgress(100, '100% — écriture terminée');
-    flashLog('✓ Flash réussi !', 'ok');
+      _setFlashProgress(100, '100% — écriture terminée');
+      flashLog('✓ Flash réussi !', 'ok');
 
-    // ── 6. Redémarrage ───────────────────────────────────────────────────────
-    flashLog('Redémarrage de la station…');
-    await loader.hardReset();
-    flashLog('✓ Station redémarrée — nouveau firmware actif', 'ok');
-    await transport.disconnect();
+      // ── 6. Redémarrage ─────────────────────────────────────────────────────
+      flashLog('Redémarrage de la station…');
+      try {
+        // Nom de méthode variable selon la version d'esptool-js
+        if (typeof loader.hardReset === 'function')      await loader.hardReset();
+        else if (typeof loader.hard_reset === 'function') await loader.hard_reset();
+        else await transport.setRTS(false); // fallback : libère le reset
+        flashLog('✓ Station redémarrée — nouveau firmware actif', 'ok');
+      } catch(e) {
+        flashLog('↻ Reset manuel : débranchez/rebranchez la station', 'warn');
+      }
+
+    } finally {
+      // Fermeture du port dans tous les cas (succès ou erreur)
+      try { await transport.disconnect(); } catch(_) {}
+    }
 
   } catch(e) {
     flashLog('⚠ ' + e.message, 'err');
