@@ -253,13 +253,16 @@ void startBLE() {
 
   svc->start();
 
-  // Configure l'advertising : inclut l'UUID du service NUS et le nom du périphérique
-  // Le nom va dans la scan response (pas l'advertisement principal) car les deux ensemble
-  // dépassent la limite de 31 octets : flags(3) + UUID128(18) + nom(14) = 35 octets.
-  // enableScanResponse(true) inclut automatiquement le nom (défini via init()) dans la scan response.
+  // Configure l'advertising : UUID du service NUS dans le paquet principal,
+  // nom du périphérique dans la scan response séparée.
+  // Le nom ne peut pas être dans le paquet principal : flags(3) + UUID128(18) + nom(14) = 35 > 31 octets.
+  // enableScanResponse(true) seul ne suffit pas en NimBLE v2.x — il faut passer les données explicitement.
+  NimBLEAdvertisementData scanResponse;
+  scanResponse.setName(("Mycromesh-" + String(localAddress)).c_str());
+
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
-  adv->enableScanResponse(true);
+  adv->setScanResponseData(scanResponse);
   adv->start();
 }
 
