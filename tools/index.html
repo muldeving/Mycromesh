@@ -630,10 +630,10 @@ const PARAMS = [
     label: 'Âge max ping',
     desc: 'Délai avant expiration / relance d\'un ping réseau.',
     type: 'int',
-    default: 20000,
-    min: 1000,
-    max: 300000,
-    unit: 'ms',
+    default: 20,
+    min: 1,
+    max: 300,
+    unit: 's',
     tip: 'Temps d\'attente avant de retenter ou supprimer un ping'
   },
   {
@@ -641,10 +641,10 @@ const PARAMS = [
     label: 'Âge max entrée',
     desc: 'Timeout d\'attente d\'un acquittement de message.',
     type: 'int',
-    default: 20000,
-    min: 1000,
-    max: 300000,
-    unit: 'ms',
+    default: 20,
+    min: 1,
+    max: 300,
+    unit: 's',
     tip: 'Délai avant d\'abandonner un message non acquitté'
   },
   {
@@ -652,10 +652,10 @@ const PARAMS = [
     label: 'Timeout démarrage',
     desc: 'Durée maximale de la procédure de démarrage.',
     type: 'int',
-    default: 15000,
-    min: 1000,
-    max: 120000,
-    unit: 'ms',
+    default: 15,
+    min: 1,
+    max: 120,
+    unit: 's',
     tip: 'Temps alloué à l\'initialisation complète'
   },
   {
@@ -663,10 +663,10 @@ const PARAMS = [
     label: 'Délai déduplication',
     desc: 'Durée de rétention des messages pour éviter les doublons.',
     type: 'int',
-    default: 3600000,
-    min: 60000,
-    max: 86400000,
-    unit: 'ms',
+    default: 3600,
+    min: 60,
+    max: 86400,
+    unit: 's',
     tip: 'Un message identique reçu dans ce délai sera ignoré'
   },
   {
@@ -674,10 +674,10 @@ const PARAMS = [
     label: 'Timeout commande gateway',
     desc: 'Délai max pour une commande envoyée à la gateway.',
     type: 'int',
-    default: 60000,
-    min: 5000,
-    max: 600000,
-    unit: 'ms',
+    default: 60,
+    min: 5,
+    max: 600,
+    unit: 's',
     tip: 'Au-delà, la commande est mise en cache pour retry'
   },
   {
@@ -685,10 +685,10 @@ const PARAMS = [
     label: 'Timeout NetIO',
     desc: 'Durée maximale du tunnel Network I/O.',
     type: 'int',
-    default: 30000,
-    min: 5000,
-    max: 600000,
-    unit: 'ms',
+    default: 300,
+    min: 5,
+    max: 600,
+    unit: 's',
     tip: 'Ferme le tunnel après cette durée d\'inactivité'
   },
   {

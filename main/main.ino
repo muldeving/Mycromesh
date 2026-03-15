@@ -53,16 +53,16 @@ String crontabString;
 
 // Variable de parametres
 
-long MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée
-long starttimeout = 15000;      // Durée timout procudure start
+long MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée — stocké en ms, p.cfg en secondes
+long starttimeout = 15000;      // Durée timout procudure start — stocké en ms, p.cfg en secondes
 int localAddress = 61;          // address of this device
-long DELAY = 3600000;           // Délai en millisecondes (ici 5 secondes)
-long MAX_ENTRY_AGE = 20000;     // Durée maximale (en millisecondes) avant traitement d'une entrée
+long DELAY = 3600000;           // Délai en millisecondes — stocké en ms, p.cfg en secondes
+long MAX_ENTRY_AGE = 20000;     // Durée maximale (en millisecondes) avant traitement d'une entrée — stocké en ms, p.cfg en secondes
 long actiontimerdel = 30;
 bool maintmode = true;
 int stationgateway = 1;
-long TOGATE_COMMAND_TIMEOUT = 60000;
-long NETIO_TIMEOUT     = 30000;   // ms sans activité avant fermeture automatique du tunnel
+long TOGATE_COMMAND_TIMEOUT = 60000;  // stocké en ms, p.cfg en secondes
+long NETIO_TIMEOUT     = 300000;      // ms sans activité avant fermeture automatique du tunnel — stocké en ms, p.cfg en secondes
 int filetimeout = 300;
 int filetxtimeout = 60;
 
@@ -1856,18 +1856,18 @@ void readsd(bool allrecover){
         }
         myFile.close();
       }
-      MAX_PING_AGE = getValue(sdtopar, ':', 0).toInt();
-      starttimeout = getValue(sdtopar, ':', 1).toInt();
+      MAX_PING_AGE = getValue(sdtopar, ':', 0).toInt() * 1000L;
+      starttimeout = getValue(sdtopar, ':', 1).toInt() * 1000L;
       localAddress = getValue(sdtopar, ':', 2).toInt();
-      DELAY = getValue(sdtopar, ':', 3).toInt();
-      MAX_ENTRY_AGE = getValue(sdtopar, ':', 4).toInt();
+      DELAY = getValue(sdtopar, ':', 3).toInt() * 1000L;
+      MAX_ENTRY_AGE = getValue(sdtopar, ':', 4).toInt() * 1000L;
       actiontimerdel = getValue(sdtopar, ':', 5).toInt();
       maintmode = getValue(sdtopar, ':', 6).toInt();
       stationgateway = getValue(sdtopar, ':', 7).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt() * 1000L;
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
+      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft = getValue(sdtopar, ':', 12).toInt(); if(ft > 0) filetimeout = ft; }
       { int fxt = getValue(sdtopar, ':', 13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
 
@@ -1904,15 +1904,15 @@ void writetosd(){
     }
 
     String varptosd;
-    varptosd += MAX_PING_AGE;
+    varptosd += MAX_PING_AGE / 1000;
     varptosd += ":";
-    varptosd += starttimeout;
+    varptosd += starttimeout / 1000;
     varptosd += ":";
     varptosd += localAddress;
     varptosd += ":";
-    varptosd += DELAY;
+    varptosd += DELAY / 1000;
     varptosd += ":";
-    varptosd += MAX_ENTRY_AGE;
+    varptosd += MAX_ENTRY_AGE / 1000;
     varptosd += ":";
     varptosd += actiontimerdel;
     varptosd += ":";
@@ -1920,7 +1920,7 @@ void writetosd(){
     varptosd += ":";
     varptosd += stationgateway;
     varptosd += ":";
-    varptosd += TOGATE_COMMAND_TIMEOUT;
+    varptosd += TOGATE_COMMAND_TIMEOUT / 1000;
     varptosd += ":";
     varptosd += serialLevel;
     varptosd += ":";
@@ -1928,7 +1928,7 @@ void writetosd(){
     // pour qu'au redémarrage la station revienne dans son mode normal (USB ou BT).
     varptosd += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode);
     varptosd += ":";
-    varptosd += NETIO_TIMEOUT;
+    varptosd += NETIO_TIMEOUT / 1000;
     varptosd += ":";
     varptosd += filetimeout;
     varptosd += ":";
@@ -3097,20 +3097,20 @@ void interpreter(String msg){
   // ── getcfg : lit p.cfg et l'envoie sur le port actif (pour le configurateur web) ──
   if(cmd == "getcfg"){
     String cfg;
-    cfg += MAX_PING_AGE;           cfg += ":";
-    cfg += starttimeout;           cfg += ":";
-    cfg += localAddress;           cfg += ":";
-    cfg += DELAY;                  cfg += ":";
-    cfg += MAX_ENTRY_AGE;          cfg += ":";
-    cfg += actiontimerdel;         cfg += ":";
-    cfg += maintmode;              cfg += ":";
-    cfg += stationgateway;         cfg += ":";
-    cfg += TOGATE_COMMAND_TIMEOUT; cfg += ":";
-    cfg += serialLevel;            cfg += ":";
+    cfg += MAX_PING_AGE / 1000;           cfg += ":";
+    cfg += starttimeout / 1000;           cfg += ":";
+    cfg += localAddress;                  cfg += ":";
+    cfg += DELAY / 1000;                  cfg += ":";
+    cfg += MAX_ENTRY_AGE / 1000;          cfg += ":";
+    cfg += actiontimerdel;                cfg += ":";
+    cfg += maintmode;                     cfg += ":";
+    cfg += stationgateway;                cfg += ":";
+    cfg += TOGATE_COMMAND_TIMEOUT / 1000; cfg += ":";
+    cfg += serialLevel;                   cfg += ":";
     cfg += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode); cfg += ":";
-    cfg += NETIO_TIMEOUT;          cfg += ":";
-    cfg += filetimeout;            cfg += ":";
-    cfg += filetxtimeout;          cfg += ":";
+    cfg += NETIO_TIMEOUT / 1000;          cfg += ":";
+    cfg += filetimeout;                   cfg += ":";
+    cfg += filetxtimeout;                 cfg += ":";
     ioOutput("CFG:" + cfg);
   }
   // ── setcfg : reçoit p.cfg depuis le configurateur, applique et sauvegarde ──
@@ -3121,18 +3121,18 @@ void interpreter(String msg){
     if(fieldCount < 14){
       ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/14 champs)");
     } else {
-      MAX_PING_AGE           = getValue(msg,':',1).toInt();
-      starttimeout           = getValue(msg,':',2).toInt();
+      MAX_PING_AGE           = getValue(msg,':',1).toInt() * 1000L;
+      starttimeout           = getValue(msg,':',2).toInt() * 1000L;
       localAddress           = getValue(msg,':',3).toInt();
-      DELAY                  = getValue(msg,':',4).toInt();
-      MAX_ENTRY_AGE          = getValue(msg,':',5).toInt();
+      DELAY                  = getValue(msg,':',4).toInt() * 1000L;
+      MAX_ENTRY_AGE          = getValue(msg,':',5).toInt() * 1000L;
       actiontimerdel         = getValue(msg,':',6).toInt();
       maintmode              = getValue(msg,':',7).toInt();
       stationgateway         = getValue(msg,':',8).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',9).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',9).toInt() * 1000L;
       { int sl = getValue(msg,':',10).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(msg,':',11).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
+      { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft  = getValue(msg,':',13).toInt(); if(ft  > 0) filetimeout  = ft; }
       { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
       writetosd();
