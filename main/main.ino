@@ -5,7 +5,6 @@
 #include "driver/gpio.h"
 #include <SD.h>
 #include <time.h>
-#include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
 #include <Preferences.h>
 #include <Update.h>
