@@ -1043,7 +1043,16 @@ async function _serialConnect() {
   }
   try {
     _serialPort = await navigator.serial.requestPort();
-    await _serialPort.open({ baudRate: 9600 });
+    // Si le port est resté "ouvert" côté Chrome après un flash (le device.close()
+    // d'esptool a pu échouer silencieusement lors de la ré-énumération USB),
+    // on force un close() puis on réessaie open().
+    try {
+      await _serialPort.open({ baudRate: 9600 });
+    } catch(_) {
+      try { await _serialPort.close(); } catch(_) {}
+      await new Promise(r => setTimeout(r, 300));
+      await _serialPort.open({ baudRate: 9600 });
+    }
     _serialWriter = _serialPort.writable.getWriter();
     _serialUpdateUI(true);
     serialLog('✓ Port ouvert à 9600 baud', 'ok');
@@ -1268,7 +1277,10 @@ async function startFlash() {
       }
 
     } finally {
-      // Fermeture du port dans tous les cas (succès ou erreur)
+      // Attendre la ré-énumération USB de l'ESP32-C3 après le reset
+      // avant de tenter de fermer le port (sinon device.close() échoue
+      // silencieusement et Chrome garde le port marqué "ouvert").
+      await new Promise(r => setTimeout(r, 800));
       try { await transport.disconnect(); } catch(_) {}
     }
 
