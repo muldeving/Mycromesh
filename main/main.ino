@@ -255,9 +255,11 @@ void startBLE() {
 
   // Configure l'advertising : inclut l'UUID du service NUS et le nom du périphérique
   // sans cela le périphérique n'est pas identifiable par les scanners BLE (LightBlue, nRF Connect…)
+  // NimBLE v2.x n'inclut pas le nom automatiquement — il faut l'ajouter explicitement
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
-  adv->enableScanResponse(true);    // inclut le nom dans la réponse de scan active
+  adv->setName(("Mycromesh-" + String(localAddress)).c_str());
+  adv->enableScanResponse(true);
   adv->start();
 }
 
