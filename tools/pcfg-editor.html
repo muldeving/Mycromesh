@@ -1172,13 +1172,12 @@ async function startFlash() {
     flashLog('Chargement de la bibliothèque esptool-js…');
     let ESPLoader, Transport;
     try {
-      const mod = await import('https://unpkg.com/esptool-js/bundle.js');
+      const mod = await import('./esptool-js.bundle.js');
       ESPLoader = mod.ESPLoader;
       Transport = mod.Transport;
-      if (!ESPLoader || !Transport) throw new Error('exports ESPLoader/Transport introuvables');
+      if (!ESPLoader || !Transport) throw new Error('exports ESPLoader/Transport introuvables dans esptool-js.bundle.js');
     } catch(e) {
-      throw new Error('Impossible de charger esptool-js : ' + e.message +
-        '. Vérifiez votre connexion internet.');
+      throw new Error('Impossible de charger esptool-js.bundle.js : ' + e.message);
     }
     flashLog('✓ esptool-js chargé', 'ok');
 
