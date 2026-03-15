@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mycromesh – Éditeur p.cfg</title>
+  <!-- esptool-js : bibliothèque officielle Espressif pour flasher les ESP via Web Serial -->
+  <script src="https://unpkg.com/esptool-js/bundle.js"></script>
   <style>
     :root {
       --bg: #0f1117;
@@ -364,6 +366,68 @@
     #serial-log .log-ok  { color: var(--success); }
     #serial-log .log-info { color: var(--text-muted); }
     #serial-log .log-sent { color: var(--accent); }
+
+    /* ── Flash firmware ── */
+    .flash-opt-row {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .flash-opt-row label { font-size: .82rem; color: var(--text-muted); white-space: nowrap; }
+    .flash-opt-row input[type="text"] {
+      width: 100px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .88rem;
+      padding: .4rem .65rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .flash-opt-row input[type="text"]:focus { border-color: var(--accent); }
+    .flash-progress-wrap {
+      margin: .75rem 0 .25rem;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+      height: 6px;
+      display: none;
+    }
+    .flash-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width .15s;
+      border-radius: 99px;
+    }
+    .flash-progress-label {
+      font-size: .75rem;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      margin-bottom: .5rem;
+      display: none;
+    }
+    #flash-log {
+      font-family: var(--mono);
+      font-size: .76rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .5rem .8rem;
+      max-height: 150px;
+      overflow-y: auto;
+      display: none;
+      line-height: 1.7;
+      margin-top: .75rem;
+    }
+    #flash-log .log-err  { color: var(--danger); }
+    #flash-log .log-ok   { color: var(--success); }
+    #flash-log .log-info { color: var(--text-muted); }
+    #flash-log .log-warn { color: var(--warning); }
     .serial-cmd-row {
       display: none;
       align-items: center;
@@ -418,6 +482,35 @@
     <input id="serial-cmd-input" type="text" placeholder="Entrez une commande… (ex: version, ls:/, ping)" autocomplete="off" spellcheck="false" />
     <button class="btn btn-secondary" onclick="serialSendCmd()">Envoyer</button>
   </div>
+</div>
+
+<!-- ── Flash firmware ── -->
+<div class="card">
+  <div class="card-title">⚡ Flash firmware (ESP32-C3)</div>
+  <div id="flash-no-support" style="display:none;margin-bottom:.75rem">
+    <span class="status-err">⚠ Web Serial API non supportée — utilisez Chrome ou Edge (desktop).</span>
+  </div>
+  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:.9rem">
+    Placez <code style="font-family:var(--mono);color:var(--accent);background:rgba(91,138,245,.1);padding:.1rem .35rem;border-radius:4px">firmware.bin</code>
+    dans le même dossier que ce fichier HTML, puis cliquez sur <strong>Flasher</strong>.
+    Le port série sera sélectionné dans la fenêtre du navigateur.
+  </p>
+  <div class="flash-opt-row">
+    <label>Adresse :</label>
+    <input type="text" id="flash-addr" value="0x10000" />
+    <span style="font-size:.78rem;color:var(--text-muted)">
+      <code style="font-family:var(--mono)">0x10000</code> = application &nbsp;·&nbsp;
+      <code style="font-family:var(--mono)">0x0</code> = image complète
+    </span>
+  </div>
+  <div class="flash-progress-wrap" id="flash-progress-wrap">
+    <div class="flash-progress-bar" id="flash-progress-bar"></div>
+  </div>
+  <div class="flash-progress-label" id="flash-progress-label"></div>
+  <div class="btn-row">
+    <button class="btn btn-primary" id="btn-flash" onclick="startFlash()">⚡ Flasher firmware.bin</button>
+  </div>
+  <div id="flash-log"></div>
 </div>
 
 <!-- ── Chargement fichier ── -->
@@ -1030,6 +1123,147 @@ async function serialWriteCfg() {
   } catch(e) {
     serialLog('⚠ ' + e.message, 'err');
   } finally { _serialSetBtns(false); }
+}
+
+// ═══════════════════════════════════════════════════
+//  Flash firmware via esptool-js (Web Serial)
+// ═══════════════════════════════════════════════════
+let _flashing = false;
+
+function flashLog(msg, type = 'info') {
+  const log = document.getElementById('flash-log');
+  log.style.display = 'block';
+  const d = document.createElement('div');
+  d.className = 'log-' + type;
+  d.textContent = msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  while (log.childElementCount > 80) log.removeChild(log.firstChild);
+}
+
+function _setFlashProgress(pct, label) {
+  const wrap  = document.getElementById('flash-progress-wrap');
+  const bar   = document.getElementById('flash-progress-bar');
+  const lbl   = document.getElementById('flash-progress-label');
+  wrap.style.display = 'block';
+  bar.style.width    = Math.min(100, pct) + '%';
+  if (label !== undefined) {
+    lbl.style.display = 'block';
+    lbl.textContent   = label;
+  }
+}
+
+async function startFlash() {
+  if (_flashing) return;
+  if (!('serial' in navigator)) {
+    document.getElementById('flash-no-support').style.display = 'block';
+    return;
+  }
+  if (typeof ESPLoader === 'undefined' || typeof Transport === 'undefined') {
+    flashLog('⚠ Bibliothèque esptool-js non chargée. Vérifiez votre connexion internet et rechargez la page.', 'err');
+    return;
+  }
+
+  _flashing = true;
+  const btn = document.getElementById('btn-flash');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Flash en cours…';
+  // Reset UI
+  document.getElementById('flash-progress-wrap').style.display  = 'none';
+  document.getElementById('flash-progress-label').style.display = 'none';
+  document.getElementById('flash-progress-bar').style.width     = '0%';
+  document.getElementById('flash-log').innerHTML   = '';
+  document.getElementById('flash-log').style.display = 'none';
+
+  try {
+    // ── 1. Charger firmware.bin ──────────────────────────────────────────────
+    flashLog('Chargement de firmware.bin…');
+    let res;
+    try { res = await fetch('./firmware.bin'); } catch(e) { throw new Error('Impossible de charger firmware.bin : ' + e.message); }
+    if (!res.ok) throw new Error(
+      'firmware.bin introuvable (HTTP ' + res.status + '). ' +
+      'Placez le fichier dans le même dossier que pcfg-editor.html.'
+    );
+    const ab = await res.arrayBuffer();
+    const u8 = new Uint8Array(ab);
+    // Convertit en binary string attendue par esptool-js
+    let binaryStr = '';
+    for (let i = 0; i < u8.length; i++) binaryStr += String.fromCharCode(u8[i]);
+    flashLog('✓ firmware.bin — ' + (u8.length / 1024).toFixed(1) + ' Ko chargés', 'ok');
+
+    // ── 2. Fermer le terminal série s'il est ouvert ──────────────────────────
+    const savedPort = _serialPort;
+    if (_serialPort) {
+      flashLog('Fermeture du terminal série…');
+      await _serialDisconnect();
+    }
+
+    // ── 3. Sélectionner le port ──────────────────────────────────────────────
+    let port;
+    try {
+      if (savedPort) {
+        // Réutilise le port déjà connu (l'utilisateur ne re-sélectionne pas)
+        port = savedPort;
+        flashLog('Réutilisation du port série précédent');
+      } else {
+        flashLog('Sélectionnez le port USB de la station dans la fenêtre du navigateur…');
+        port = await navigator.serial.requestPort();
+      }
+    } catch(e) {
+      if (e.name === 'NotSelectedError') return; // annulé par l'utilisateur
+      throw e;
+    }
+
+    // ── 4. Connexion au bootloader ───────────────────────────────────────────
+    flashLog('Connexion au bootloader ESP32-C3…');
+    // Terminal minimal requis par ESPLoader
+    const espTerminal = {
+      clean()        {},
+      writeLine(d)   { if (d && d.trim()) flashLog(d.trim()); },
+      write(d)       { /* fragments bruts de progression — ignorés */ }
+    };
+    const transport = new Transport(port, false);
+    const loader    = new ESPLoader({ transport, baudrate: 921600, terminal: espTerminal, debugLogging: false });
+
+    const chip = await loader.main();
+    flashLog('✓ Puce détectée : ' + chip, 'ok');
+
+    // ── 5. Écriture flash ────────────────────────────────────────────────────
+    const addr = parseInt(document.getElementById('flash-addr').value, 16);
+    if (isNaN(addr)) throw new Error('Adresse de flash invalide — utilisez le format hexadécimal : 0x10000');
+    flashLog('Écriture à 0x' + addr.toString(16).toUpperCase() + '…');
+
+    await loader.writeFlash({
+      fileArray : [{ data: binaryStr, address: addr }],
+      flashSize : 'keep',
+      flashMode : 'keep',
+      flashFreq : 'keep',
+      eraseAll  : false,
+      compress  : true,
+      reportProgress(fileIndex, written, total) {
+        const pct   = (written / total) * 100;
+        const label = Math.round(pct) + '%  (' + (written / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' Ko)';
+        _setFlashProgress(pct, label);
+      },
+      calculateMD5Hash: null,
+    });
+
+    _setFlashProgress(100, '100% — écriture terminée');
+    flashLog('✓ Flash réussi !', 'ok');
+
+    // ── 6. Redémarrage ───────────────────────────────────────────────────────
+    flashLog('Redémarrage de la station…');
+    await loader.hardReset();
+    flashLog('✓ Station redémarrée — nouveau firmware actif', 'ok');
+    await transport.disconnect();
+
+  } catch(e) {
+    flashLog('⚠ ' + e.message, 'err');
+  } finally {
+    _flashing = false;
+    btn.disabled    = false;
+    btn.textContent = '⚡ Flasher firmware.bin';
+  }
 }
 
 // ═══════════════════════════════════════════════════
