@@ -363,6 +363,28 @@
     #serial-log .log-err { color: var(--danger); }
     #serial-log .log-ok  { color: var(--success); }
     #serial-log .log-info { color: var(--text-muted); }
+    #serial-log .log-sent { color: var(--accent); }
+    .serial-cmd-row {
+      display: none;
+      align-items: center;
+      gap: .5rem;
+      margin-top: .6rem;
+    }
+    .serial-cmd-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .88rem;
+      padding: .45rem .7rem;
+      outline: none;
+      transition: border-color .2s;
+      min-width: 0;
+    }
+    .serial-cmd-row input:focus { border-color: var(--accent); }
+    .serial-cmd-row input::placeholder { color: var(--text-muted); opacity: .6; }
   </style>
 </head>
 <body>
@@ -392,6 +414,10 @@
     <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
   </div>
   <div id="serial-log"></div>
+  <div class="serial-cmd-row" id="serial-cmd-row">
+    <input id="serial-cmd-input" type="text" placeholder="Entrez une commande… (ex: version, ls:/, ping)" autocomplete="off" spellcheck="false" />
+    <button class="btn btn-secondary" onclick="serialSendCmd()">Envoyer</button>
+  </div>
 </div>
 
 <!-- ── Chargement fichier ── -->
@@ -847,13 +873,18 @@ function serialLog(msg, type = 'info') {
   while (log.childElementCount > 60) log.removeChild(log.firstChild);
 }
 
+const _cmdHistory = [];
+let   _cmdHistIdx  = -1;
+
 function _serialUpdateUI(connected) {
   document.getElementById('serial-dot').classList.toggle('on', connected);
   document.getElementById('serial-status-text').textContent = connected ? 'Connecté' : 'Non connecté';
   const btn = document.getElementById('btn-serial-connect');
   btn.textContent = connected ? '⏏ Déconnecter' : '⚡ Connecter';
   btn.className   = connected ? 'btn btn-connected' : 'btn btn-primary';
-  document.getElementById('serial-actions').style.display = connected ? 'flex' : 'none';
+  document.getElementById('serial-actions').style.display  = connected ? 'flex'  : 'none';
+  document.getElementById('serial-cmd-row').style.display  = connected ? 'flex'  : 'none';
+  if (connected) document.getElementById('serial-cmd-input').focus();
 }
 
 async function _serialReadLoop() {
@@ -946,6 +977,23 @@ function _serialSetBtns(disabled) {
   document.querySelectorAll('#serial-actions .btn').forEach(b => b.disabled = disabled);
 }
 
+async function serialSendCmd() {
+  const input = document.getElementById('serial-cmd-input');
+  const cmd = input.value.trim();
+  if (!cmd || !_serialWriter) return;
+  // Historique
+  if (_cmdHistory[0] !== cmd) _cmdHistory.unshift(cmd);
+  if (_cmdHistory.length > 50) _cmdHistory.pop();
+  _cmdHistIdx = -1;
+  input.value = '';
+  serialLog('> ' + cmd, 'sent');
+  try {
+    await _serialSend(cmd + '\n');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  }
+}
+
 async function serialReadCfg() {
   if (!_serialWriter) return;
   _serialSetBtns(true);
@@ -994,6 +1042,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const fi = document.getElementById('file-input');
 
   fi.addEventListener('change', () => loadFile(fi.files[0]));
+
+  // Saisie de commandes série : Entrée pour envoyer, ↑/↓ pour l'historique
+  document.getElementById('serial-cmd-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); serialSendCmd(); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (_cmdHistIdx < _cmdHistory.length - 1) {
+        _cmdHistIdx++;
+        e.target.value = _cmdHistory[_cmdHistIdx];
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (_cmdHistIdx > 0) { _cmdHistIdx--; e.target.value = _cmdHistory[_cmdHistIdx]; }
+      else { _cmdHistIdx = -1; e.target.value = ''; }
+    }
+  });
 
   dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
