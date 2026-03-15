@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mycromesh – Éditeur p.cfg</title>
-  <!-- esptool-js : bibliothèque officielle Espressif pour flasher les ESP via Web Serial -->
-  <script src="https://unpkg.com/esptool-js/bundle.js"></script>
   <style>
     :root {
       --bg: #0f1117;
@@ -1159,11 +1157,6 @@ async function startFlash() {
     document.getElementById('flash-no-support').style.display = 'block';
     return;
   }
-  if (typeof ESPLoader === 'undefined' || typeof Transport === 'undefined') {
-    flashLog('⚠ Bibliothèque esptool-js non chargée. Vérifiez votre connexion internet et rechargez la page.', 'err');
-    return;
-  }
-
   _flashing = true;
   const btn = document.getElementById('btn-flash');
   btn.disabled    = true;
@@ -1176,6 +1169,20 @@ async function startFlash() {
   document.getElementById('flash-log').style.display = 'none';
 
   try {
+    // ── 0. Charger esptool-js (ES module, chargé à la demande) ───────────────
+    flashLog('Chargement de la bibliothèque esptool-js…');
+    let ESPLoader, Transport;
+    try {
+      const mod = await import('https://unpkg.com/esptool-js/bundle.js');
+      ESPLoader = mod.ESPLoader;
+      Transport = mod.Transport;
+      if (!ESPLoader || !Transport) throw new Error('exports ESPLoader/Transport introuvables');
+    } catch(e) {
+      throw new Error('Impossible de charger esptool-js : ' + e.message +
+        '. Vérifiez votre connexion internet.');
+    }
+    flashLog('✓ esptool-js chargé', 'ok');
+
     // ── 1. Charger firmware.bin ──────────────────────────────────────────────
     flashLog('Chargement de firmware.bin…');
     let res;
