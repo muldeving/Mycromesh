@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mycromesh – Éditeur p.cfg</title>
+  <title>Mycromesh – Configurateur</title>
+  <link rel="icon" type="image/svg+xml" href="MycroMesht.svg" />
   <style>
     :root {
       --bg: #0f1117;
@@ -45,25 +46,12 @@
       gap: 1rem;
     }
     .logo {
-      width: 44px; height: 44px;
-      background: linear-gradient(135deg, var(--accent), #9b6df5);
-      border-radius: var(--radius);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.4rem;
+      height: 44px;
       flex-shrink: 0;
+      filter: brightness(0) invert(1);
     }
     header h1 { font-size: 1.5rem; font-weight: 700; }
     header p { color: var(--text-muted); font-size: .85rem; margin-top: .15rem; }
-    .badge {
-      margin-left: auto;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: .25rem .75rem;
-      font-size: .75rem;
-      color: var(--text-muted);
-      white-space: nowrap;
-    }
 
     /* ── Card ── */
     .card {
@@ -325,18 +313,204 @@
       border-top: 1px solid var(--border);
       margin: .25rem 0;
     }
+
+    /* ── Port série ── */
+    .serial-toolbar {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .serial-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background .3s, box-shadow .3s;
+    }
+    .serial-dot.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    #serial-status-text { font-size: .85rem; color: var(--text-muted); }
+    .serial-baud {
+      font-family: var(--mono);
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+    .serial-actions {
+      display: flex;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .btn-connected {
+      background: rgba(76,175,130,.2);
+      color: var(--success);
+      border: 1px solid rgba(76,175,130,.4);
+    }
+    .btn-connected:hover { background: rgba(76,175,130,.3); }
+    #serial-log {
+      font-family: var(--mono);
+      font-size: .76rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .5rem .8rem;
+      max-height: 110px;
+      overflow-y: auto;
+      display: none;
+      line-height: 1.7;
+    }
+    #serial-log .log-err { color: var(--danger); }
+    #serial-log .log-ok  { color: var(--success); }
+    #serial-log .log-info { color: var(--text-muted); }
+    #serial-log .log-sent { color: var(--accent); }
+
+    /* ── Flash firmware ── */
+    .flash-opt-row {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .flash-opt-row label { font-size: .82rem; color: var(--text-muted); white-space: nowrap; }
+    .flash-opt-row input[type="text"] {
+      width: 100px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .88rem;
+      padding: .4rem .65rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .flash-opt-row input[type="text"]:focus { border-color: var(--accent); }
+    .flash-progress-wrap {
+      margin: .75rem 0 .25rem;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+      height: 6px;
+      display: none;
+    }
+    .flash-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width .15s;
+      border-radius: 99px;
+    }
+    .flash-progress-label {
+      font-size: .75rem;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      margin-bottom: .5rem;
+      display: none;
+    }
+    #flash-log {
+      font-family: var(--mono);
+      font-size: .76rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .5rem .8rem;
+      max-height: 150px;
+      overflow-y: auto;
+      display: none;
+      line-height: 1.7;
+      margin-top: .75rem;
+    }
+    #flash-log .log-err  { color: var(--danger); }
+    #flash-log .log-ok   { color: var(--success); }
+    #flash-log .log-info { color: var(--text-muted); }
+    #flash-log .log-warn { color: var(--warning); }
+    .serial-cmd-row {
+      display: none;
+      align-items: center;
+      gap: .5rem;
+      margin-top: .6rem;
+    }
+    .serial-cmd-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: .88rem;
+      padding: .45rem .7rem;
+      outline: none;
+      transition: border-color .2s;
+      min-width: 0;
+    }
+    .serial-cmd-row input:focus { border-color: var(--accent); }
+    .serial-cmd-row input::placeholder { color: var(--text-muted); opacity: .6; }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">⬡</div>
+  <img class="logo" src="MycroMeshwt.svg" alt="Mycromesh logo">
   <div>
     <h1>Mycromesh</h1>
-    <p>Éditeur de configuration p.cfg</p>
+    <p>Configurateur</p>
   </div>
-  <span class="badge">v1.3.0</span>
 </header>
+
+<!-- ── Port série ── -->
+<div class="card">
+  <div class="card-title">🔌 Port série</div>
+  <div id="serial-no-support" style="display:none;margin-bottom:.75rem">
+    <span class="status-err">⚠ Web Serial API non supportée — utilisez Chrome ou Edge (desktop).</span>
+  </div>
+  <div class="serial-toolbar">
+    <button class="btn btn-primary" id="btn-serial-connect" onclick="serialToggle()">⚡ Connecter</button>
+    <span class="serial-dot" id="serial-dot"></span>
+    <span id="serial-status-text">Non connecté</span>
+    <span class="serial-baud">9600 baud</span>
+  </div>
+  <div class="serial-actions" id="serial-actions" style="display:none">
+    <button class="btn btn-secondary" onclick="serialReadCfg()">⬇ Lire p.cfg depuis la station</button>
+    <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
+    <button class="btn btn-secondary" onclick="serialStam()">▶ Démarrer la station (stam)</button>
+  </div>
+  <div id="serial-log"></div>
+  <div class="serial-cmd-row" id="serial-cmd-row">
+    <input id="serial-cmd-input" type="text" placeholder="Entrez une commande… (ex: version, ls:/, ping)" autocomplete="off" spellcheck="false" />
+    <button class="btn btn-secondary" onclick="serialSendCmd()">Envoyer</button>
+  </div>
+</div>
+
+<!-- ── Flash firmware ── -->
+<div class="card">
+  <div class="card-title">⚡ Flash firmware (ESP32-C3)</div>
+  <div id="flash-no-support" style="display:none;margin-bottom:.75rem">
+    <span class="status-err">⚠ Web Serial API non supportée — utilisez Chrome ou Edge (desktop).</span>
+  </div>
+  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:.9rem">
+    Placez <code style="font-family:var(--mono);color:var(--accent);background:rgba(91,138,245,.1);padding:.1rem .35rem;border-radius:4px">firmware.bin</code>
+    dans le même dossier que ce fichier HTML sur le serveur, puis cliquez sur <strong>Flasher</strong>.
+  </p>
+  <div class="flash-opt-row">
+    <label>Adresse :</label>
+    <input type="text" id="flash-addr" value="0x10000" />
+    <span style="font-size:.78rem;color:var(--text-muted)">
+      <code style="font-family:var(--mono)">0x10000</code> = application &nbsp;·&nbsp;
+      <code style="font-family:var(--mono)">0x0</code> = image complète
+    </span>
+  </div>
+  <div class="flash-progress-wrap" id="flash-progress-wrap">
+    <div class="flash-progress-bar" id="flash-progress-bar"></div>
+  </div>
+  <div class="flash-progress-label" id="flash-progress-label"></div>
+  <div class="btn-row">
+    <button class="btn btn-primary" id="btn-flash" onclick="startFlash()">⚡ Flasher firmware.bin</button>
+  </div>
+  <div id="flash-log"></div>
+</div>
 
 <!-- ── Chargement fichier ── -->
 <div class="card">
@@ -457,10 +631,10 @@ const PARAMS = [
     label: 'Âge max ping',
     desc: 'Délai avant expiration / relance d\'un ping réseau.',
     type: 'int',
-    default: 20000,
-    min: 1000,
-    max: 300000,
-    unit: 'ms',
+    default: 20,
+    min: 1,
+    max: 300,
+    unit: 's',
     tip: 'Temps d\'attente avant de retenter ou supprimer un ping'
   },
   {
@@ -468,10 +642,10 @@ const PARAMS = [
     label: 'Âge max entrée',
     desc: 'Timeout d\'attente d\'un acquittement de message.',
     type: 'int',
-    default: 20000,
-    min: 1000,
-    max: 300000,
-    unit: 'ms',
+    default: 20,
+    min: 1,
+    max: 300,
+    unit: 's',
     tip: 'Délai avant d\'abandonner un message non acquitté'
   },
   {
@@ -479,10 +653,10 @@ const PARAMS = [
     label: 'Timeout démarrage',
     desc: 'Durée maximale de la procédure de démarrage.',
     type: 'int',
-    default: 15000,
-    min: 1000,
-    max: 120000,
-    unit: 'ms',
+    default: 15,
+    min: 1,
+    max: 120,
+    unit: 's',
     tip: 'Temps alloué à l\'initialisation complète'
   },
   {
@@ -490,10 +664,10 @@ const PARAMS = [
     label: 'Délai déduplication',
     desc: 'Durée de rétention des messages pour éviter les doublons.',
     type: 'int',
-    default: 3600000,
-    min: 60000,
-    max: 86400000,
-    unit: 'ms',
+    default: 3600,
+    min: 60,
+    max: 86400,
+    unit: 's',
     tip: 'Un message identique reçu dans ce délai sera ignoré'
   },
   {
@@ -501,10 +675,10 @@ const PARAMS = [
     label: 'Timeout commande gateway',
     desc: 'Délai max pour une commande envoyée à la gateway.',
     type: 'int',
-    default: 60000,
-    min: 5000,
-    max: 600000,
-    unit: 'ms',
+    default: 60,
+    min: 5,
+    max: 600,
+    unit: 's',
     tip: 'Au-delà, la commande est mise en cache pour retry'
   },
   {
@@ -512,10 +686,10 @@ const PARAMS = [
     label: 'Timeout NetIO',
     desc: 'Durée maximale du tunnel Network I/O.',
     type: 'int',
-    default: 30000,
-    min: 5000,
-    max: 600000,
-    unit: 'ms',
+    default: 300,
+    min: 5,
+    max: 600,
+    unit: 's',
     tip: 'Ferme le tunnel après cette durée d\'inactivité'
   },
   {
@@ -772,6 +946,366 @@ function resetAll() {
 }
 
 // ═══════════════════════════════════════════════════
+//  Port série (Web Serial API)
+// ═══════════════════════════════════════════════════
+let _serialPort   = null;
+let _serialWriter = null;
+let _serialReader = null;
+let _serialBuf    = '';
+const _serialCbs  = [];
+
+function serialLog(msg, type = 'info') {
+  const log = document.getElementById('serial-log');
+  log.style.display = 'block';
+  const d = document.createElement('div');
+  d.className = 'log-' + type;
+  d.textContent = msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  while (log.childElementCount > 60) log.removeChild(log.firstChild);
+}
+
+const _cmdHistory = [];
+let   _cmdHistIdx  = -1;
+
+function _serialUpdateUI(connected) {
+  document.getElementById('serial-dot').classList.toggle('on', connected);
+  document.getElementById('serial-status-text').textContent = connected ? 'Connecté' : 'Non connecté';
+  const btn = document.getElementById('btn-serial-connect');
+  btn.textContent = connected ? '⏏ Déconnecter' : '⚡ Connecter';
+  btn.className   = connected ? 'btn btn-connected' : 'btn btn-primary';
+  document.getElementById('serial-actions').style.display  = connected ? 'flex'  : 'none';
+  document.getElementById('serial-cmd-row').style.display  = connected ? 'flex'  : 'none';
+  if (connected) document.getElementById('serial-cmd-input').focus();
+}
+
+async function _serialReadLoop() {
+  const dec = new TextDecoder();
+  try {
+    while (_serialPort) {
+      const reader = _serialPort.readable.getReader();
+      _serialReader = reader;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          _serialBuf += dec.decode(value, { stream: true });
+          const lines = _serialBuf.split('\n');
+          _serialBuf = lines.pop();
+          for (const raw of lines) {
+            const line = raw.replace(/\r/g, '').trim();
+            if (!line) continue;
+            // Dispatch to waiting callbacks first
+            let dispatched = false;
+            for (let i = 0; i < _serialCbs.length; i++) {
+              if (_serialCbs[i](line)) { _serialCbs.splice(i, 1); dispatched = true; break; }
+            }
+            if (!dispatched) serialLog(line);
+          }
+        }
+      } finally { reader.releaseLock(); }
+      break;
+    }
+  } catch(e) {
+    if (_serialPort) serialLog('⚠ ' + e.message, 'err');
+  }
+}
+
+function _waitForPrefix(prefix, timeout = 7000) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      const i = _serialCbs.findIndex(cb => cb._p === prefix);
+      if (i !== -1) _serialCbs.splice(i, 1);
+      reject(new Error('Timeout — pas de réponse du firmware'));
+    }, timeout);
+    const cb = line => {
+      if (line.startsWith(prefix)) { clearTimeout(t); resolve(line); return true; }
+      return false;
+    };
+    cb._p = prefix;
+    _serialCbs.push(cb);
+  });
+}
+
+async function _serialSend(text) {
+  if (!_serialWriter) throw new Error('Port non connecté');
+  await _serialWriter.write(new TextEncoder().encode(text));
+}
+
+async function serialToggle() {
+  if (_serialPort) await _serialDisconnect();
+  else             await _serialConnect();
+}
+
+async function _serialConnect() {
+  if (!('serial' in navigator)) {
+    document.getElementById('serial-no-support').style.display = 'block';
+    return;
+  }
+  try {
+    _serialPort = await navigator.serial.requestPort();
+    await _serialPort.open({ baudRate: 9600 });
+    _serialWriter = _serialPort.writable.getWriter();
+    _serialUpdateUI(true);
+    serialLog('✓ Port ouvert à 9600 baud', 'ok');
+    _serialReadLoop();
+  } catch(e) {
+    if (e.name !== 'NotSelectedError') serialLog('⚠ ' + e.message, 'err');
+    _serialPort = null; _serialWriter = null;
+  }
+}
+
+async function _serialDisconnect() {
+  try {
+    if (_serialReader) { await _serialReader.cancel(); _serialReader = null; }
+    if (_serialWriter) { _serialWriter.releaseLock(); _serialWriter = null; }
+    if (_serialPort)   { await _serialPort.close();   _serialPort   = null; }
+  } catch(e) { /* ignore cleanup errors */ }
+  _serialUpdateUI(false);
+  serialLog('— Déconnecté', 'info');
+}
+
+function _serialSetBtns(disabled) {
+  document.querySelectorAll('#serial-actions .btn').forEach(b => b.disabled = disabled);
+}
+
+async function serialSendCmd() {
+  const input = document.getElementById('serial-cmd-input');
+  const cmd = input.value.trim();
+  if (!cmd || !_serialWriter) return;
+  // Historique
+  if (_cmdHistory[0] !== cmd) _cmdHistory.unshift(cmd);
+  if (_cmdHistory.length > 50) _cmdHistory.pop();
+  _cmdHistIdx = -1;
+  input.value = '';
+  serialLog('> ' + cmd, 'sent');
+  try {
+    await _serialSend(cmd + '\n');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  }
+}
+
+async function serialReadCfg() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    serialLog('→ getcfg');
+    await _serialSend('getcfg\n');
+    const line = await _waitForPrefix('CFG:');
+    const body = line.slice(4);
+    if (body.startsWith('ERR:')) { serialLog('⚠ ' + body.slice(4), 'err'); return; }
+    const result = parseCfg(body);
+    if (!result.ok) { serialLog('⚠ ' + result.msg, 'err'); return; }
+    Object.assign(state, result.data);
+    PARAMS.forEach(p => { const el = document.getElementById('param-' + p.key); if (el) el.value = state[p.key]; });
+    update();
+    document.getElementById('file-status').innerHTML = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
+    document.getElementById('raw-preview').style.display = 'block';
+    document.getElementById('raw-preview').textContent = '> ' + body;
+    serialLog('✓ Configuration chargée (' + Object.keys(result.data).length + ' paramètres)', 'ok');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
+}
+
+async function serialStam() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    const ts = Math.floor(Date.now() / 1000);
+    serialLog('→ stam:' + ts);
+    await _serialSend('stam:' + ts + '\n');
+    serialLog('✓ Commande stam envoyée (timestamp=' + ts + ')', 'ok');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
+}
+
+async function serialWriteCfg() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    const cfg = buildCfgString();
+    serialLog('→ setcfg:' + cfg.slice(0, 28) + '…');
+    await _serialSend('setcfg:' + cfg + '\n');
+    const line = await _waitForPrefix('CFG:');
+    if (line === 'CFG:OK') serialLog('✓ Configuration enregistrée sur la station', 'ok');
+    else serialLog('⚠ ' + line.slice(4), 'err');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
+}
+
+// ═══════════════════════════════════════════════════
+//  Flash firmware via esptool-js (Web Serial)
+// ═══════════════════════════════════════════════════
+let _flashing = false;
+
+function flashLog(msg, type = 'info') {
+  const log = document.getElementById('flash-log');
+  log.style.display = 'block';
+  const d = document.createElement('div');
+  d.className = 'log-' + type;
+  d.textContent = msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  while (log.childElementCount > 80) log.removeChild(log.firstChild);
+}
+
+function _setFlashProgress(pct, label) {
+  const wrap  = document.getElementById('flash-progress-wrap');
+  const bar   = document.getElementById('flash-progress-bar');
+  const lbl   = document.getElementById('flash-progress-label');
+  wrap.style.display = 'block';
+  bar.style.width    = Math.min(100, pct) + '%';
+  if (label !== undefined) {
+    lbl.style.display = 'block';
+    lbl.textContent   = label;
+  }
+}
+
+async function startFlash() {
+  if (_flashing) return;
+  if (!('serial' in navigator)) {
+    document.getElementById('flash-no-support').style.display = 'block';
+    return;
+  }
+  _flashing = true;
+  const btn = document.getElementById('btn-flash');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Flash en cours…';
+  // Reset UI
+  document.getElementById('flash-progress-wrap').style.display  = 'none';
+  document.getElementById('flash-progress-label').style.display = 'none';
+  document.getElementById('flash-progress-bar').style.width     = '0%';
+  document.getElementById('flash-log').innerHTML   = '';
+  document.getElementById('flash-log').style.display = 'none';
+
+  try {
+    // ── 0. Charger esptool-js (ES module, chargé à la demande) ───────────────
+    flashLog('Chargement de la bibliothèque esptool-js…');
+    let ESPLoader, Transport;
+    try {
+      const mod = await import('./esptool-js.bundle.js');
+      ESPLoader = mod.ESPLoader;
+      Transport = mod.Transport;
+      if (!ESPLoader || !Transport) throw new Error('exports ESPLoader/Transport introuvables dans esptool-js.bundle.js');
+    } catch(e) {
+      throw new Error('Impossible de charger esptool-js.bundle.js : ' + e.message);
+    }
+    flashLog('✓ esptool-js chargé', 'ok');
+
+    // ── 1. Charger firmware.bin depuis le serveur ────────────────────────────
+    flashLog('Chargement de firmware.bin…');
+    let res;
+    try { res = await fetch('./firmware.bin'); } catch(e) { throw new Error('Impossible de charger firmware.bin : ' + e.message); }
+    if (!res.ok) throw new Error('firmware.bin introuvable (HTTP ' + res.status + '). Placez le fichier dans le même dossier que pcfg-editor.html sur le serveur.');
+    const ab = await res.arrayBuffer();
+    const u8 = new Uint8Array(ab);
+    let binaryStr = '';
+    for (let i = 0; i < u8.length; i++) binaryStr += String.fromCharCode(u8[i]);
+    flashLog('✓ firmware.bin — ' + (u8.length / 1024).toFixed(1) + ' Ko chargés', 'ok');
+
+    // ── 2. Fermer le terminal série s'il est ouvert ──────────────────────────
+    const savedPort = _serialPort;
+    if (_serialPort) {
+      flashLog('Fermeture du terminal série…');
+      await _serialDisconnect();
+    }
+
+    // ── 3. Sélectionner le port ──────────────────────────────────────────────
+    let port;
+    try {
+      if (savedPort) {
+        // Réutilise le port déjà connu (l'utilisateur ne re-sélectionne pas)
+        port = savedPort;
+        flashLog('Réutilisation du port série précédent');
+      } else {
+        flashLog('Sélectionnez le port USB de la station dans la fenêtre du navigateur…');
+        port = await navigator.serial.requestPort();
+      }
+    } catch(e) {
+      if (e.name === 'NotSelectedError') return; // annulé par l'utilisateur
+      throw e;
+    }
+
+    // ── 4. Connexion au bootloader ───────────────────────────────────────────
+    flashLog('Connexion au bootloader ESP32-C3…');
+    // Terminal minimal requis par ESPLoader
+    const espTerminal = {
+      clean()        {},
+      writeLine(d)   { if (d && d.trim()) flashLog(d.trim()); },
+      write(d)       { /* fragments bruts de progression — ignorés */ }
+    };
+    // transport déclaré ici pour être accessible dans le finally
+    let transport = new Transport(port, false);
+    let loader    = new ESPLoader({ transport, baudrate: 921600, terminal: espTerminal, debugLogging: false });
+
+    try {
+      const chip = await loader.main();
+      flashLog('✓ Puce détectée : ' + chip, 'ok');
+
+      // ── 5. Écriture flash ──────────────────────────────────────────────────
+      const addr = parseInt(document.getElementById('flash-addr').value, 16);
+      if (isNaN(addr)) throw new Error('Adresse de flash invalide — utilisez le format hexadécimal : 0x10000');
+      flashLog('Écriture à 0x' + addr.toString(16).toUpperCase() + '…');
+
+      await loader.writeFlash({
+        fileArray : [{ data: binaryStr, address: addr }],
+        flashSize : 'keep',
+        flashMode : 'keep',
+        flashFreq : 'keep',
+        eraseAll  : false,
+        compress  : true,
+        reportProgress(fileIndex, written, total) {
+          const pct   = (written / total) * 100;
+          const label = Math.round(pct) + '%  (' + (written / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' Ko)';
+          _setFlashProgress(pct, label);
+        },
+        calculateMD5Hash: null,
+      });
+
+      _setFlashProgress(100, '100% — écriture terminée');
+      flashLog('✓ Flash réussi !', 'ok');
+
+      // ── 6. Redémarrage ─────────────────────────────────────────────────────
+      flashLog('Redémarrage de la station…');
+      try {
+        // Nom de méthode variable selon la version d'esptool-js
+        if (typeof loader.hardReset === 'function')      await loader.hardReset();
+        else if (typeof loader.hard_reset === 'function') await loader.hard_reset();
+        else await transport.setRTS(false); // fallback : libère le reset
+        flashLog('✓ Station redémarrée — nouveau firmware actif', 'ok');
+      } catch(e) {
+        flashLog('↻ Reset manuel : débranchez/rebranchez la station', 'warn');
+      }
+
+    } finally {
+      try { await transport.disconnect(); } catch(_) {}
+      // Cycle open/close pour remettre le port dans un état propre côté Chrome
+      // (après le reset de l'ESP32-C3, le CDC-USB se ré-énumère et le port
+      // peut rester "ouvert" en interne — un open/close remet tout à zéro).
+      flashLog('Réinitialisation du port…');
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        await port.open({ baudRate: 9600 });
+        await new Promise(r => setTimeout(r, 500));
+        await port.close();
+        flashLog('✓ Port libéré', 'ok');
+      } catch(_) {}
+    }
+
+  } catch(e) {
+    flashLog('⚠ ' + e.message, 'err');
+  } finally {
+    _flashing = false;
+    btn.disabled    = false;
+    btn.textContent = '⚡ Flasher firmware.bin';
+  }
+}
+
+// ═══════════════════════════════════════════════════
 //  Drag & drop + file input
 // ═══════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
@@ -781,6 +1315,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const fi = document.getElementById('file-input');
 
   fi.addEventListener('change', () => loadFile(fi.files[0]));
+
+  // Saisie de commandes série : Entrée pour envoyer, ↑/↓ pour l'historique
+  document.getElementById('serial-cmd-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); serialSendCmd(); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (_cmdHistIdx < _cmdHistory.length - 1) {
+        _cmdHistIdx++;
+        e.target.value = _cmdHistory[_cmdHistIdx];
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (_cmdHistIdx > 0) { _cmdHistIdx--; e.target.value = _cmdHistory[_cmdHistIdx]; }
+      else { _cmdHistIdx = -1; e.target.value = ''; }
+    }
+  });
 
   dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
