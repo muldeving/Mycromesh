@@ -62,6 +62,9 @@ long actiontimerdel = 30;
 bool maintmode = true;
 int stationgateway = 1;
 long TOGATE_COMMAND_TIMEOUT = 60000;
+long NETIO_TIMEOUT     = 30000;   // ms sans activité avant fermeture automatique du tunnel
+const int filetimeout = 300;
+const int filetxtimeout = 60;
 
 // Niveaux de sortie série : 0=rien, 1=normal, 2=verbose, 3=debug
 #define LOG_NONE    0
@@ -81,7 +84,6 @@ bool          netioMaster       = false;   // cette station est le maître du tu
 bool          netioSlave        = false;   // cette station est l'esclave du tunnel
 int           netioRemote       = -1;      // adresse de la station distante
 unsigned long netioLastActivity = 0;       // horodatage de la dernière activité (millis)
-long          NETIO_TIMEOUT     = 30000;   // ms sans activité avant fermeture automatique du tunnel
 int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegardé avant activation du tunnel
 bool          ntioPrevMaintMode = true;    // état maintmode sauvegardé avant activation du tunnel
 
@@ -100,8 +102,6 @@ const int MAX_PINGS = 10;       // Nombre maximum d'entrées
 const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
 const int MAX_TOGATE_COMMANDS_FILE = 20;
-const int filetimeout = 300;
-const int filetxtimeout = 60;
 
 const int csPin = 21;          // LoRa radio chip select
 const int irqPin = 8;          // change for your board; must be a hardware interrupt pin
