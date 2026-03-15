@@ -73,7 +73,7 @@
     }
 
     /* ── File drop zone ── */
-    #dropzone {
+    .dropzone {
       border: 2px dashed var(--border);
       border-radius: var(--radius);
       padding: 2rem;
@@ -82,17 +82,17 @@
       transition: border-color .2s, background .2s;
       position: relative;
     }
-    #dropzone:hover, #dropzone.drag-over {
+    .dropzone:hover, .dropzone.drag-over {
       border-color: var(--accent);
       background: rgba(91,138,245,.05);
     }
-    #dropzone input[type="file"] {
+    .dropzone input[type="file"] {
       position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
     }
-    #dropzone .dz-icon { font-size: 2rem; margin-bottom: .5rem; }
-    #dropzone p { color: var(--text-muted); font-size: .9rem; }
-    #dropzone strong { color: var(--accent); }
-    #file-status {
+    .dropzone .dz-icon { font-size: 2rem; margin-bottom: .5rem; }
+    .dropzone p { color: var(--text-muted); font-size: .9rem; }
+    .dropzone strong { color: var(--accent); }
+    .file-status {
       margin-top: .75rem;
       font-size: .82rem;
       min-height: 1.2em;
@@ -101,7 +101,7 @@
     .status-err { color: var(--danger); }
 
     /* ── Raw preview ── */
-    #raw-preview {
+    .raw-preview {
       font-family: var(--mono);
       font-size: .78rem;
       background: var(--bg);
@@ -542,19 +542,6 @@
     .toggle input:checked + .toggle-slider { background: var(--accent); }
     .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
     .toggle-label { font-size: .78rem; color: var(--text-muted); }
-    .sensor-actions {
-      display: flex;
-      gap: .75rem;
-      flex-wrap: wrap;
-      margin-bottom: 1rem;
-    }
-    #panel-sensors-locked {
-      text-align: center;
-      padding: 2.5rem 1rem;
-      color: var(--text-muted);
-      font-size: .88rem;
-    }
-    #panel-sensors-locked .lock-icon { font-size: 2rem; margin-bottom: .75rem; }
   </style>
 </head>
 <body>
@@ -580,9 +567,18 @@
     <span class="serial-baud">9600 baud</span>
   </div>
   <div class="serial-actions" id="serial-actions" style="display:none">
-    <button class="btn btn-secondary" onclick="serialReadCfg()">⬇ Lire p.cfg depuis la station</button>
-    <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
-    <button class="btn btn-secondary" onclick="serialStam()">▶ Démarrer la station (stam)</button>
+    <!-- Boutons contextuels onglet Paramètres -->
+    <div id="serial-actions-params">
+      <button class="btn btn-secondary" onclick="serialReadCfg()">⬇ Lire p.cfg depuis la station</button>
+      <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
+      <button class="btn btn-secondary" onclick="serialStam()">▶ Démarrer la station (stam)</button>
+    </div>
+    <!-- Boutons contextuels onglet Capteurs -->
+    <div id="serial-actions-sensors" style="display:none">
+      <button class="btn btn-secondary" onclick="serialReadSensor()">⬇ Lire sensor.cfg depuis la station</button>
+      <button class="btn btn-secondary" onclick="serialWriteSensor()">⬆ Écrire sensor.cfg vers la station</button>
+      <button class="btn btn-secondary" onclick="serialStam()">▶ Démarrer la station (stam)</button>
+    </div>
   </div>
   <div id="serial-log"></div>
   <div class="serial-cmd-row" id="serial-cmd-row">
@@ -624,7 +620,7 @@
   <button class="tab-btn active" id="tab-params-btn" onclick="switchTab('params')">
     ⚙️ Paramètres de configuration
   </button>
-  <button class="tab-btn" id="tab-sensors-btn" onclick="switchTab('sensors')" disabled title="Connectez-vous au port série pour accéder aux capteurs">
+  <button class="tab-btn" id="tab-sensors-btn" onclick="switchTab('sensors')">
     🌡️ Capteurs <span class="tab-badge">sensor.cfg</span>
   </button>
 </div>
@@ -635,13 +631,13 @@
 <!-- ── Chargement fichier ── -->
 <div class="card">
   <div class="card-title">📂 Charger un fichier p.cfg existant</div>
-  <div id="dropzone">
+  <div class="dropzone" id="dropzone">
     <input type="file" id="file-input" accept=".cfg,text/plain" />
     <div class="dz-icon">📄</div>
     <p>Glissez-déposez votre fichier <strong>p.cfg</strong> ici<br>ou cliquez pour choisir</p>
   </div>
-  <div id="file-status"></div>
-  <div id="raw-preview"></div>
+  <div class="file-status" id="file-status"></div>
+  <div class="raw-preview" id="raw-preview"></div>
 </div>
 
 <!-- ── Paramètres ── -->
@@ -676,32 +672,48 @@
 <!-- ══ Panneau : Capteurs ══ -->
 <div id="panel-sensors" style="display:none">
 
-<!-- Message si non connecté -->
-<div id="panel-sensors-locked">
-  <div class="lock-icon">🔒</div>
-  <strong>Connexion série requise</strong><br>
-  Connectez-vous au port série pour lire et modifier la configuration des capteurs.
+<!-- ── Chargement fichier ── -->
+<div class="card">
+  <div class="card-title">📂 Charger un fichier sensor.cfg existant</div>
+  <div class="dropzone" id="sensor-dropzone">
+    <input type="file" id="sensor-file-input" accept=".cfg,text/plain" />
+    <div class="dz-icon">📄</div>
+    <p>Glissez-déposez votre fichier <strong>sensor.cfg</strong> ici<br>ou cliquez pour choisir</p>
+  </div>
+  <div class="file-status" id="sensor-file-status"></div>
+  <div class="raw-preview" id="sensor-raw-preview"></div>
 </div>
 
-<!-- Contenu capteurs (visible une fois connecté) -->
-<div id="panel-sensors-content" style="display:none">
+<!-- ── Capteurs ── -->
 <div class="card">
   <div class="card-title">🌡️ Capteurs actifs</div>
-  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:1rem">
+  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:1.25rem">
     Active ou désactive les capteurs initialisés au démarrage de la station.
     La configuration est stockée dans <code style="font-family:var(--mono);color:var(--accent);background:rgba(91,138,245,.1);padding:.1rem .35rem;border-radius:4px">/sensor.cfg</code> sur la carte SD.
   </p>
-  <div class="sensor-actions">
-    <button class="btn btn-secondary" id="btn-sensor-read"  onclick="serialReadSensor()">⬇ Lire depuis la station</button>
-    <button class="btn btn-secondary" id="btn-sensor-write" onclick="serialWriteSensor()">⬆ Écrire vers la station</button>
-  </div>
   <div class="sensor-grid" id="sensor-grid"></div>
+</div>
+
+<!-- ── Sortie ── -->
+<div class="card">
+  <div class="card-title">📋 Contenu généré du fichier sensor.cfg</div>
+  <div id="sensor-output-raw" class="raw-preview" style="display:block;margin-bottom:1rem"></div>
+  <table class="output-table">
+    <thead>
+      <tr>
+        <th>Capteur</th>
+        <th>État</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody id="sensor-output-tbody"></tbody>
+  </table>
   <div class="btn-row">
-    <button class="btn btn-primary"   onclick="serialWriteSensor()">⬆ Appliquer vers la station</button>
-    <button class="btn btn-secondary" onclick="downloadSensorCfg()">⬇ Télécharger sensor.cfg</button>
+    <button class="btn btn-secondary" onclick="copySensorToClipboard()">⎘ Copier le contenu</button>
+    <button class="btn btn-primary"   onclick="downloadSensorCfg()">⬇ Télécharger sensor.cfg</button>
+    <button class="btn btn-danger"    onclick="resetSensorAll()">↺ Désactiver tous les capteurs</button>
   </div>
 </div>
-</div><!-- fin #panel-sensors-content -->
 
 </div><!-- fin #panel-sensors -->
 
@@ -1033,7 +1045,7 @@ function parseCfg(text) {
 
 function loadFile(file) {
   if (!file) return;
-  const statusEl = document.getElementById('file-status');
+  const statusEl  = document.getElementById('file-status');
   const previewEl = document.getElementById('raw-preview');
 
   const reader = new FileReader();
@@ -1042,7 +1054,7 @@ function loadFile(file) {
     const result = parseCfg(text);
 
     previewEl.style.display = 'block';
-    previewEl.textContent = '> ' + text.trim();
+    previewEl.textContent   = '> ' + text.trim();
 
     if (!result.ok) {
       statusEl.innerHTML = `<span class="status-err">⚠ ${result.msg}</span>`;
@@ -1132,21 +1144,6 @@ function _serialUpdateUI(connected) {
   document.getElementById('serial-cmd-row').style.display  = connected ? 'flex'  : 'none';
   if (connected) document.getElementById('serial-cmd-input').focus();
 
-  // Onglet Capteurs : activé seulement si connecté
-  const sensorTab = document.getElementById('tab-sensors-btn');
-  sensorTab.disabled = !connected;
-  sensorTab.title = connected ? '' : 'Connectez-vous au port série pour accéder aux capteurs';
-  if (connected) {
-    document.getElementById('panel-sensors-locked').style.display  = 'none';
-    document.getElementById('panel-sensors-content').style.display = 'block';
-  } else {
-    // Si on était sur l'onglet Capteurs et qu'on se déconnecte → retour Paramètres
-    if (document.getElementById('tab-sensors-btn').classList.contains('active')) {
-      switchTab('params');
-    }
-    document.getElementById('panel-sensors-locked').style.display  = 'block';
-    document.getElementById('panel-sensors-content').style.display = 'none';
-  }
 }
 
 async function _serialReadLoop() {
@@ -1238,6 +1235,9 @@ async function _serialDisconnect() {
 function _serialSetBtns(disabled) {
   document.querySelectorAll('#serial-actions .btn').forEach(b => b.disabled = disabled);
 }
+function _sensorSetBtns(disabled) {
+  document.querySelectorAll('#serial-actions-sensors .btn').forEach(b => b.disabled = disabled);
+}
 
 async function serialSendCmd() {
   const input = document.getElementById('serial-cmd-input');
@@ -1270,9 +1270,9 @@ async function serialReadCfg() {
     Object.assign(state, result.data);
     PARAMS.forEach(p => { const el = document.getElementById('param-' + p.key); if (el) el.value = state[p.key]; });
     update();
-    document.getElementById('file-status').innerHTML = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
+    document.getElementById('file-status').innerHTML  = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
     document.getElementById('raw-preview').style.display = 'block';
-    document.getElementById('raw-preview').textContent = '> ' + body;
+    document.getElementById('raw-preview').textContent   = '> ' + body;
     serialLog('✓ Configuration chargée (' + Object.keys(result.data).length + ' paramètres)', 'ok');
   } catch(e) {
     serialLog('⚠ ' + e.message, 'err');
@@ -1480,11 +1480,13 @@ async function startFlash() {
 // ═══════════════════════════════════════════════════
 function switchTab(tab) {
   const tabs   = ['params', 'sensors'];
-  const panels = { params: 'panel-params', sensors: 'panel-sensors' };
-  const btns   = { params: 'tab-params-btn', sensors: 'tab-sensors-btn' };
+  const panels = { params: 'panel-params',         sensors: 'panel-sensors' };
+  const btns   = { params: 'tab-params-btn',        sensors: 'tab-sensors-btn' };
+  const acts   = { params: 'serial-actions-params', sensors: 'serial-actions-sensors' };
   tabs.forEach(t => {
     document.getElementById(panels[t]).style.display = (t === tab) ? 'block' : 'none';
     document.getElementById(btns[t]).classList.toggle('active', t === tab);
+    document.getElementById(acts[t]).style.display   = (t === tab) ? 'flex'  : 'none';
   });
 }
 
@@ -1514,6 +1516,71 @@ const SENSORS = [
 
 const sensorState = { bme680: false, aht20: false, bmp280: false };
 
+function buildSensorCfgString() {
+  return 'bme680:' + +sensorState.bme680 + ':aht20:' + +sensorState.aht20 + ':bmp280:' + +sensorState.bmp280;
+}
+
+function updateSensorOutput() {
+  const raw = buildSensorCfgString();
+  const rawEl = document.getElementById('sensor-output-raw');
+  if (rawEl) rawEl.textContent = raw;
+
+  const tbody = document.getElementById('sensor-output-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  SENSORS.forEach(s => {
+    const tr = document.createElement('tr');
+    const val = sensorState[s.key] ? '1 – Activé' : '0 – Désactivé';
+    tr.innerHTML = `<td>${s.key}</td><td>${val}</td><td>${s.desc}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function parseSensorCfg(text) {
+  const clean = text.trim().replace(/\r/g, '');
+  const parts = clean.split(':');
+  const result = { bme680: false, aht20: false, bmp280: false };
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (parts[i] === 'bme680') result.bme680 = parts[i + 1] === '1';
+    if (parts[i] === 'aht20')  result.aht20  = parts[i + 1] === '1';
+    if (parts[i] === 'bmp280') result.bmp280 = parts[i + 1] === '1';
+  }
+  const found = Object.values(result).some((_, idx) => parts.includes(['bme680','aht20','bmp280'][idx]));
+  if (!parts.includes('bme680') && !parts.includes('aht20') && !parts.includes('bmp280')) {
+    return { ok: false, msg: 'Format invalide — clés bme680/aht20/bmp280 introuvables.' };
+  }
+  return { ok: true, data: result, raw: clean };
+}
+
+function loadSensorFile(file) {
+  if (!file) return;
+  const statusEl  = document.getElementById('sensor-file-status');
+  const previewEl = document.getElementById('sensor-raw-preview');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text   = e.target.result;
+    const result = parseSensorCfg(text);
+
+    previewEl.style.display = 'block';
+    previewEl.textContent   = '> ' + text.trim();
+
+    if (!result.ok) {
+      statusEl.innerHTML = `<span class="status-err">⚠ ${result.msg}</span>`;
+      return;
+    }
+
+    Object.assign(sensorState, result.data);
+    buildSensorUI();
+
+    statusEl.innerHTML = `<span class="status-ok">✓ Fichier chargé : <strong>${file.name}</strong></span>`;
+  };
+  reader.onerror = () => {
+    statusEl.innerHTML = `<span class="status-err">⚠ Erreur de lecture du fichier.</span>`;
+  };
+  reader.readAsText(file);
+}
+
 function buildSensorUI() {
   const grid = document.getElementById('sensor-grid');
   if (!grid) return;
@@ -1531,7 +1598,6 @@ function buildSensorUI() {
     name.textContent = s.label;
     header.appendChild(name);
 
-    // Toggle switch
     const wrap  = document.createElement('label');
     wrap.className = 'toggle';
     wrap.title = s.tip || '';
@@ -1542,13 +1608,13 @@ function buildSensorUI() {
     chk.addEventListener('change', () => {
       sensorState[s.key] = chk.checked;
       card.classList.toggle('enabled', chk.checked);
+      updateSensorOutput();
     });
     const slider = document.createElement('span');
     slider.className = 'toggle-slider';
     wrap.appendChild(chk);
     wrap.appendChild(slider);
     header.appendChild(wrap);
-
     card.appendChild(header);
 
     const desc = document.createElement('div');
@@ -1558,13 +1624,7 @@ function buildSensorUI() {
 
     grid.appendChild(card);
   });
-}
-
-function _sensorSetBtns(disabled) {
-  ['btn-sensor-read', 'btn-sensor-write'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = disabled;
-  });
+  updateSensorOutput();
 }
 
 async function serialReadSensor() {
@@ -1581,8 +1641,11 @@ async function serialReadSensor() {
     sensorState.bme680 = vals[0] === '1';
     sensorState.aht20  = vals[1] === '1';
     sensorState.bmp280 = vals[2] === '1';
-    // Mettre à jour l'UI
     buildSensorUI();
+    const raw = buildSensorCfgString();
+    document.getElementById('sensor-file-status').innerHTML  = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
+    document.getElementById('sensor-raw-preview').style.display = 'block';
+    document.getElementById('sensor-raw-preview').textContent   = '> ' + raw;
     serialLog('✓ Configuration capteurs chargée (bme680=' + +sensorState.bme680 + ' aht20=' + +sensorState.aht20 + ' bmp280=' + +sensorState.bmp280 + ')', 'ok');
   } catch(e) {
     serialLog('⚠ ' + e.message, 'err');
@@ -1605,13 +1668,28 @@ async function serialWriteSensor() {
 }
 
 function downloadSensorCfg() {
-  const content = 'bme680:' + +sensorState.bme680 + ':aht20:' + +sensorState.aht20 + ':bmp280:' + +sensorState.bmp280;
+  const content = buildSensorCfgString();
   const blob = new Blob([content + '\n'], { type: 'text/plain' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url; a.download = 'sensor.cfg';
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+function copySensorToClipboard() {
+  navigator.clipboard.writeText(buildSensorCfgString()).then(() => {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2200);
+  });
+}
+
+function resetSensorAll() {
+  sensorState.bme680 = false;
+  sensorState.aht20  = false;
+  sensorState.bmp280 = false;
+  buildSensorUI();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1621,34 +1699,39 @@ document.addEventListener('DOMContentLoaded', () => {
   buildUI();
   buildSensorUI();
 
+  // ── Dropzone p.cfg ──
   const dz = document.getElementById('dropzone');
   const fi = document.getElementById('file-input');
-
   fi.addEventListener('change', () => loadFile(fi.files[0]));
+  dz.addEventListener('dragover',  (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0]; if (file) loadFile(file);
+  });
 
-  // Saisie de commandes série : Entrée pour envoyer, ↑/↓ pour l'historique
+  // ── Dropzone sensor.cfg ──
+  const sdz = document.getElementById('sensor-dropzone');
+  const sfi = document.getElementById('sensor-file-input');
+  sfi.addEventListener('change', () => loadSensorFile(sfi.files[0]));
+  sdz.addEventListener('dragover',  (e) => { e.preventDefault(); sdz.classList.add('drag-over'); });
+  sdz.addEventListener('dragleave', ()  => sdz.classList.remove('drag-over'));
+  sdz.addEventListener('drop', (e) => {
+    e.preventDefault(); sdz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0]; if (file) loadSensorFile(file);
+  });
+
+  // ── Saisie de commandes série : Entrée pour envoyer, ↑/↓ pour l'historique ──
   document.getElementById('serial-cmd-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); serialSendCmd(); }
     else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (_cmdHistIdx < _cmdHistory.length - 1) {
-        _cmdHistIdx++;
-        e.target.value = _cmdHistory[_cmdHistIdx];
-      }
+      if (_cmdHistIdx < _cmdHistory.length - 1) { _cmdHistIdx++; e.target.value = _cmdHistory[_cmdHistIdx]; }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (_cmdHistIdx > 0) { _cmdHistIdx--; e.target.value = _cmdHistory[_cmdHistIdx]; }
       else { _cmdHistIdx = -1; e.target.value = ''; }
     }
-  });
-
-  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dz.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) loadFile(file);
   });
 });
 </script>
