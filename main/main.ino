@@ -114,6 +114,9 @@ int filesender = -1;
 int filereceivientstation = -1;
 unsigned long ltgdel = 0;
 bool sensorstart = false;
+bool sensor_bme680 = false;
+bool sensor_aht20 = false;
+bool sensor_bmp280 = false;
 int lastMinuteChecked = -1;
 int rtmapdel = 0, fpingdel = 0;
 unsigned long starttime;
@@ -1717,25 +1720,27 @@ String extractvalue(String indump, String rshval){
 }
 
 void startsensor(){
-  if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
+  if (sensor_bme680) {
+    if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
+    bme.setTemperatureOversampling(BME680_OS_8X);
+    bme.setHumidityOversampling(BME680_OS_2X);
+    bme.setPressureOversampling(BME680_OS_4X);
+    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+    bme.setGasHeater(320, 150);
+  }
 
-  bme.setTemperatureOversampling(BME680_OS_8X);
-  bme.setHumidityOversampling(BME680_OS_2X);
-  bme.setPressureOversampling(BME680_OS_4X);
-  bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-  bme.setGasHeater(320, 150);
+  if (sensor_aht20) {
+    if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
+  }
 
-  if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
-
-  if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
- 
-/* Default settings from datasheet. */
-bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, /* Operating Mode. */
-Adafruit_BMP280::SAMPLING_X2, /* Temp. oversampling */
-Adafruit_BMP280::SAMPLING_X16, /* Pressure oversampling */
-Adafruit_BMP280::FILTER_X16, /* Filtering. */
-Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
-  
+  if (sensor_bmp280) {
+    if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                    Adafruit_BMP280::SAMPLING_X2,      /* Temp. oversampling */
+                    Adafruit_BMP280::SAMPLING_X16,     /* Pressure oversampling */
+                    Adafruit_BMP280::FILTER_X16,       /* Filtering. */
+                    Adafruit_BMP280::STANDBY_MS_500);  /* Standby time. */
+  }
 }
 
 void measuretodump(int ver){
@@ -1883,6 +1888,19 @@ void readsd(bool allrecover){
       sdtocron = getValue(sdtocron, '\n', 0);
       logD("cron:" + sdtocron);
       crontabString = sdtocron;
+
+      myFile = SD.open("/sensor.cfg", FILE_READ);
+      String sdtosensor = "";
+      if (myFile) {
+        while (myFile.available()) {
+          sdtosensor += (char)myFile.read();
+        }
+        myFile.close();
+      }
+      sensor_bme680 = getValue(sdtosensor, ':', 1).toInt() == 1;
+      sensor_aht20  = getValue(sdtosensor, ':', 3).toInt() == 1;
+      sensor_bmp280 = getValue(sdtosensor, ':', 5).toInt() == 1;
+      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280));
 
       initGaloisField();
 
