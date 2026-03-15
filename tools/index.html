@@ -448,6 +448,113 @@
     }
     .serial-cmd-row input:focus { border-color: var(--accent); }
     .serial-cmd-row input::placeholder { color: var(--text-muted); opacity: .6; }
+
+    /* ── Onglets ── */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: .75rem 1.25rem;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--text-muted);
+      font-family: var(--font);
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color .2s, border-color .2s, background .2s;
+    }
+    .tab-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.03); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .tab-btn .tab-badge {
+      display: inline-block;
+      font-size: .68rem;
+      background: rgba(91,138,245,.15);
+      color: var(--accent);
+      border-radius: 4px;
+      padding: .1rem .35rem;
+      margin-left: .4rem;
+      vertical-align: middle;
+    }
+    .tab-btn:disabled .tab-badge { background: rgba(136,146,164,.12); color: var(--text-muted); }
+
+    /* ── Grille capteurs ── */
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+    @media (max-width: 600px) { .sensor-grid { grid-template-columns: 1fr; } }
+    .sensor-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .6rem;
+      transition: border-color .2s;
+    }
+    .sensor-card.enabled { border-color: var(--accent); }
+    .sensor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sensor-name {
+      font-family: var(--mono);
+      font-size: .95rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .sensor-desc {
+      font-size: .75rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    /* Toggle switch */
+    .toggle-wrap { display: flex; align-items: center; gap: .5rem; }
+    .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: var(--border);
+      border-radius: 99px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+    .toggle-label { font-size: .78rem; color: var(--text-muted); }
+    .sensor-actions {
+      display: flex;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    #panel-sensors-locked {
+      text-align: center;
+      padding: 2.5rem 1rem;
+      color: var(--text-muted);
+      font-size: .88rem;
+    }
+    #panel-sensors-locked .lock-icon { font-size: 2rem; margin-bottom: .75rem; }
   </style>
 </head>
 <body>
@@ -512,6 +619,19 @@
   <div id="flash-log"></div>
 </div>
 
+<!-- ── Barre d'onglets ── -->
+<div class="card tab-bar">
+  <button class="tab-btn active" id="tab-params-btn" onclick="switchTab('params')">
+    ⚙️ Paramètres de configuration
+  </button>
+  <button class="tab-btn" id="tab-sensors-btn" onclick="switchTab('sensors')" disabled title="Connectez-vous au port série pour accéder aux capteurs">
+    🌡️ Capteurs <span class="tab-badge">sensor.cfg</span>
+  </button>
+</div>
+
+<!-- ══ Panneau : Paramètres ══ -->
+<div id="panel-params">
+
 <!-- ── Chargement fichier ── -->
 <div class="card">
   <div class="card-title">📂 Charger un fichier p.cfg existant</div>
@@ -550,6 +670,40 @@
     <button class="btn btn-danger" onclick="resetAll()">↺ Réinitialiser les défauts</button>
   </div>
 </div>
+
+</div><!-- fin #panel-params -->
+
+<!-- ══ Panneau : Capteurs ══ -->
+<div id="panel-sensors" style="display:none">
+
+<!-- Message si non connecté -->
+<div id="panel-sensors-locked">
+  <div class="lock-icon">🔒</div>
+  <strong>Connexion série requise</strong><br>
+  Connectez-vous au port série pour lire et modifier la configuration des capteurs.
+</div>
+
+<!-- Contenu capteurs (visible une fois connecté) -->
+<div id="panel-sensors-content" style="display:none">
+<div class="card">
+  <div class="card-title">🌡️ Capteurs actifs</div>
+  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:1rem">
+    Active ou désactive les capteurs initialisés au démarrage de la station.
+    La configuration est stockée dans <code style="font-family:var(--mono);color:var(--accent);background:rgba(91,138,245,.1);padding:.1rem .35rem;border-radius:4px">/sensor.cfg</code> sur la carte SD.
+  </p>
+  <div class="sensor-actions">
+    <button class="btn btn-secondary" id="btn-sensor-read"  onclick="serialReadSensor()">⬇ Lire depuis la station</button>
+    <button class="btn btn-secondary" id="btn-sensor-write" onclick="serialWriteSensor()">⬆ Écrire vers la station</button>
+  </div>
+  <div class="sensor-grid" id="sensor-grid"></div>
+  <div class="btn-row">
+    <button class="btn btn-primary"   onclick="serialWriteSensor()">⬆ Appliquer vers la station</button>
+    <button class="btn btn-secondary" onclick="downloadSensorCfg()">⬇ Télécharger sensor.cfg</button>
+  </div>
+</div>
+</div><!-- fin #panel-sensors-content -->
+
+</div><!-- fin #panel-sensors -->
 
 <div id="toast">✓ Copié dans le presse-papiers !</div>
 
@@ -977,6 +1131,22 @@ function _serialUpdateUI(connected) {
   document.getElementById('serial-actions').style.display  = connected ? 'flex'  : 'none';
   document.getElementById('serial-cmd-row').style.display  = connected ? 'flex'  : 'none';
   if (connected) document.getElementById('serial-cmd-input').focus();
+
+  // Onglet Capteurs : activé seulement si connecté
+  const sensorTab = document.getElementById('tab-sensors-btn');
+  sensorTab.disabled = !connected;
+  sensorTab.title = connected ? '' : 'Connectez-vous au port série pour accéder aux capteurs';
+  if (connected) {
+    document.getElementById('panel-sensors-locked').style.display  = 'none';
+    document.getElementById('panel-sensors-content').style.display = 'block';
+  } else {
+    // Si on était sur l'onglet Capteurs et qu'on se déconnecte → retour Paramètres
+    if (document.getElementById('tab-sensors-btn').classList.contains('active')) {
+      switchTab('params');
+    }
+    document.getElementById('panel-sensors-locked').style.display  = 'block';
+    document.getElementById('panel-sensors-content').style.display = 'none';
+  }
 }
 
 async function _serialReadLoop() {
@@ -1306,10 +1476,150 @@ async function startFlash() {
 }
 
 // ═══════════════════════════════════════════════════
+//  Onglets
+// ═══════════════════════════════════════════════════
+function switchTab(tab) {
+  const tabs   = ['params', 'sensors'];
+  const panels = { params: 'panel-params', sensors: 'panel-sensors' };
+  const btns   = { params: 'tab-params-btn', sensors: 'tab-sensors-btn' };
+  tabs.forEach(t => {
+    document.getElementById(panels[t]).style.display = (t === tab) ? 'block' : 'none';
+    document.getElementById(btns[t]).classList.toggle('active', t === tab);
+  });
+}
+
+// ═══════════════════════════════════════════════════
+//  Capteurs (sensor.cfg)
+// ═══════════════════════════════════════════════════
+const SENSORS = [
+  {
+    key: 'bme680',
+    label: 'BME680',
+    desc: 'Température, humidité, pression atmosphérique et qualité de l\'air (gaz VOC).',
+    tip: 'Capteur Bosch multi-mesures haute précision'
+  },
+  {
+    key: 'aht20',
+    label: 'AHT20',
+    desc: 'Température et humidité relative. Souvent utilisé en complément du BMP280.',
+    tip: 'Capteur Aosong — température et humidité'
+  },
+  {
+    key: 'bmp280',
+    label: 'BMP280',
+    desc: 'Pression atmosphérique et température. Idéal en combinaison avec l\'AHT20.',
+    tip: 'Capteur Bosch — pression et température'
+  }
+];
+
+const sensorState = { bme680: false, aht20: false, bmp280: false };
+
+function buildSensorUI() {
+  const grid = document.getElementById('sensor-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  SENSORS.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'sensor-card' + (sensorState[s.key] ? ' enabled' : '');
+    card.id = 'sensor-card-' + s.key;
+
+    const header = document.createElement('div');
+    header.className = 'sensor-header';
+
+    const name = document.createElement('span');
+    name.className = 'sensor-name';
+    name.textContent = s.label;
+    header.appendChild(name);
+
+    // Toggle switch
+    const wrap  = document.createElement('label');
+    wrap.className = 'toggle';
+    wrap.title = s.tip || '';
+    const chk = document.createElement('input');
+    chk.type    = 'checkbox';
+    chk.id      = 'sensor-' + s.key;
+    chk.checked = sensorState[s.key];
+    chk.addEventListener('change', () => {
+      sensorState[s.key] = chk.checked;
+      card.classList.toggle('enabled', chk.checked);
+    });
+    const slider = document.createElement('span');
+    slider.className = 'toggle-slider';
+    wrap.appendChild(chk);
+    wrap.appendChild(slider);
+    header.appendChild(wrap);
+
+    card.appendChild(header);
+
+    const desc = document.createElement('div');
+    desc.className = 'sensor-desc';
+    desc.textContent = s.desc;
+    card.appendChild(desc);
+
+    grid.appendChild(card);
+  });
+}
+
+function _sensorSetBtns(disabled) {
+  ['btn-sensor-read', 'btn-sensor-write'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+async function serialReadSensor() {
+  if (!_serialWriter) return;
+  _sensorSetBtns(true);
+  try {
+    serialLog('→ getsensor', 'sent');
+    await _serialSend('getsensor\n');
+    const line = await _waitForPrefix('SENSOR:');
+    const body = line.slice(7);
+    if (body.startsWith('ERR:')) { serialLog('⚠ ' + body.slice(4), 'err'); return; }
+    const vals = body.split(':').filter(v => v !== '');
+    if (vals.length < 3) { serialLog('⚠ Réponse SENSOR invalide : ' + body, 'err'); return; }
+    sensorState.bme680 = vals[0] === '1';
+    sensorState.aht20  = vals[1] === '1';
+    sensorState.bmp280 = vals[2] === '1';
+    // Mettre à jour l'UI
+    buildSensorUI();
+    serialLog('✓ Configuration capteurs chargée (bme680=' + +sensorState.bme680 + ' aht20=' + +sensorState.aht20 + ' bmp280=' + +sensorState.bmp280 + ')', 'ok');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _sensorSetBtns(false); }
+}
+
+async function serialWriteSensor() {
+  if (!_serialWriter) return;
+  _sensorSetBtns(true);
+  try {
+    const cmd = 'setsensor:' + +sensorState.bme680 + ':' + +sensorState.aht20 + ':' + +sensorState.bmp280 + ':';
+    serialLog('→ ' + cmd, 'sent');
+    await _serialSend(cmd + '\n');
+    const line = await _waitForPrefix('SENSOR:');
+    if (line === 'SENSOR:OK') serialLog('✓ Configuration capteurs enregistrée sur la station', 'ok');
+    else serialLog('⚠ ' + line.slice(7), 'err');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _sensorSetBtns(false); }
+}
+
+function downloadSensorCfg() {
+  const content = 'bme680:' + +sensorState.bme680 + ':aht20:' + +sensorState.aht20 + ':bmp280:' + +sensorState.bmp280;
+  const blob = new Blob([content + '\n'], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'sensor.cfg';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════
 //  Drag & drop + file input
 // ═══════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   buildUI();
+  buildSensorUI();
 
   const dz = document.getElementById('dropzone');
   const fi = document.getElementById('file-input');

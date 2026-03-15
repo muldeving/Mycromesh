@@ -1986,7 +1986,27 @@ void writetosd(){
     else{
       logN("[ERREUR SD] Impossible d'écrire /e.cfg (état)");
     }
+
+    writeSensorCfg();
+
     sdToLora();
+}
+
+void writeSensorCfg(){
+  String varstosd = "bme680:";
+  varstosd += sensor_bme680 ? "1" : "0";
+  varstosd += ":aht20:";
+  varstosd += sensor_aht20  ? "1" : "0";
+  varstosd += ":bmp280:";
+  varstosd += sensor_bmp280 ? "1" : "0";
+
+  File sensorFile = SD.open("/sensor.cfg", FILE_WRITE);
+  if (sensorFile) {
+    sensorFile.println(varstosd);
+    sensorFile.close();
+  } else {
+    logN("[ERREUR SD] Impossible d'écrire /sensor.cfg");
+  }
 }
 
 bool exportcache() {
@@ -3156,6 +3176,29 @@ void interpreter(String msg){
       { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
       writetosd();
       ioOutput("CFG:OK");
+    }
+  }
+  // ── getsensor : envoie l'état des capteurs au configurateur ──
+  if(cmd == "getsensor"){
+    String s;
+    s += sensor_bme680 ? 1 : 0; s += ":";
+    s += sensor_aht20  ? 1 : 0; s += ":";
+    s += sensor_bmp280 ? 1 : 0; s += ":";
+    ioOutput("SENSOR:" + s);
+  }
+  // ── setsensor : reçoit la config capteurs, applique et sauvegarde ──
+  // Format attendu : setsensor:<bme680>:<aht20>:<bmp280>
+  if(cmd == "setsensor"){
+    int fieldCount = 0;
+    for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
+    if(fieldCount < 3){
+      ioOutput("SENSOR:ERR:format invalide (" + String(fieldCount) + "/3 champs)");
+    } else {
+      sensor_bme680 = getValue(msg,':',1).toInt() == 1;
+      sensor_aht20  = getValue(msg,':',2).toInt() == 1;
+      sensor_bmp280 = getValue(msg,':',3).toInt() == 1;
+      writeSensorCfg();
+      ioOutput("SENSOR:OK");
     }
   }
   if(cmd == "data"){
