@@ -222,15 +222,15 @@ String             bleRxBuffer  = "";
 bool               bleRxReady   = false;
 
 class BLEServerCB : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer*)    override { bleConnected = true;  }
-  void onDisconnect(NimBLEServer* s) override {
+  void onConnect(NimBLEServer*, NimBLEConnInfo&)    override { bleConnected = true;  }
+  void onDisconnect(NimBLEServer* s, NimBLEConnInfo&, int) override {
     bleConnected = false;
     s->startAdvertising(); // relance la publicité pour permettre une reconnexion
   }
 };
 
 class BLERxCB : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c) override {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
     bleRxBuffer = c->getValue().c_str();
     bleRxReady  = true;
   }
