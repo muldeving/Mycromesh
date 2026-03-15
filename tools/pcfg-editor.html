@@ -488,14 +488,10 @@
   <div id="flash-no-support" style="display:none;margin-bottom:.75rem">
     <span class="status-err">⚠ Web Serial API non supportée — utilisez Chrome ou Edge (desktop).</span>
   </div>
-  <div class="flash-opt-row" style="margin-bottom:1rem">
-    <label>Fichier :</label>
-    <label class="btn btn-secondary" style="cursor:pointer;position:relative">
-      📂 Choisir firmware.bin
-      <input type="file" id="flash-file-input" accept=".bin" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%" />
-    </label>
-    <span id="flash-file-name" style="font-family:var(--mono);font-size:.82rem;color:var(--text-muted)">Aucun fichier sélectionné</span>
-  </div>
+  <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:.9rem">
+    Placez <code style="font-family:var(--mono);color:var(--accent);background:rgba(91,138,245,.1);padding:.1rem .35rem;border-radius:4px">firmware.bin</code>
+    dans le même dossier que ce fichier HTML sur le serveur, puis cliquez sur <strong>Flasher</strong>.
+  </p>
   <div class="flash-opt-row">
     <label>Adresse :</label>
     <input type="text" id="flash-addr" value="0x10000" />
@@ -509,7 +505,7 @@
   </div>
   <div class="flash-progress-label" id="flash-progress-label"></div>
   <div class="btn-row">
-    <button class="btn btn-primary" id="btn-flash" onclick="startFlash()" disabled>⚡ Flasher</button>
+    <button class="btn btn-primary" id="btn-flash" onclick="startFlash()">⚡ Flasher firmware.bin</button>
   </div>
   <div id="flash-log"></div>
 </div>
@@ -1186,16 +1182,16 @@ async function startFlash() {
     }
     flashLog('✓ esptool-js chargé', 'ok');
 
-    // ── 1. Lire le fichier sélectionné par l'utilisateur ────────────────────
-    const fileInput = document.getElementById('flash-file-input');
-    if (!fileInput.files || !fileInput.files[0]) throw new Error('Aucun fichier sélectionné — utilisez le bouton "Choisir firmware.bin".');
-    const file = fileInput.files[0];
-    flashLog('Lecture de ' + file.name + '…');
-    const ab = await file.arrayBuffer();
+    // ── 1. Charger firmware.bin depuis le serveur ────────────────────────────
+    flashLog('Chargement de firmware.bin…');
+    let res;
+    try { res = await fetch('./firmware.bin'); } catch(e) { throw new Error('Impossible de charger firmware.bin : ' + e.message); }
+    if (!res.ok) throw new Error('firmware.bin introuvable (HTTP ' + res.status + '). Placez le fichier dans le même dossier que pcfg-editor.html sur le serveur.');
+    const ab = await res.arrayBuffer();
     const u8 = new Uint8Array(ab);
     let binaryStr = '';
     for (let i = 0; i < u8.length; i++) binaryStr += String.fromCharCode(u8[i]);
-    flashLog('✓ ' + file.name + ' — ' + (u8.length / 1024).toFixed(1) + ' Ko', 'ok');
+    flashLog('✓ firmware.bin — ' + (u8.length / 1024).toFixed(1) + ' Ko chargés', 'ok');
 
     // ── 2. Fermer le terminal série s'il est ouvert ──────────────────────────
     const savedPort = _serialPort;
@@ -1282,13 +1278,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const fi = document.getElementById('file-input');
 
   fi.addEventListener('change', () => loadFile(fi.files[0]));
-
-  // Sélection du firmware : active le bouton Flash et affiche le nom du fichier
-  document.getElementById('flash-file-input').addEventListener('change', function() {
-    const f = this.files[0];
-    document.getElementById('flash-file-name').textContent = f ? f.name + ' (' + (f.size / 1024).toFixed(1) + ' Ko)' : 'Aucun fichier sélectionné';
-    document.getElementById('btn-flash').disabled = !f;
-  });
 
   // Saisie de commandes série : Entrée pour envoyer, ↑/↓ pour l'historique
   document.getElementById('serial-cmd-input').addEventListener('keydown', (e) => {
