@@ -11,10 +11,7 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHT10.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <NimBLEDevice.h>
 
 Adafruit_BMP280 bmp;
 Adafruit_AHT10 aht;
@@ -218,22 +215,22 @@ PingEntry pingList[MAX_PINGS];
 #define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-BLEServer*         bleServer    = nullptr;
-BLECharacteristic* bleTxChar    = nullptr;
+NimBLEServer*         bleServer    = nullptr;
+NimBLECharacteristic* bleTxChar    = nullptr;
 bool               bleConnected = false;
 String             bleRxBuffer  = "";
 bool               bleRxReady   = false;
 
-class BLEServerCB : public BLEServerCallbacks {
-  void onConnect(BLEServer*)    override { bleConnected = true;  }
-  void onDisconnect(BLEServer* s) override {
+class BLEServerCB : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer*)    override { bleConnected = true;  }
+  void onDisconnect(NimBLEServer* s) override {
     bleConnected = false;
     s->startAdvertising(); // relance la publicité pour permettre une reconnexion
   }
 };
 
-class BLERxCB : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* c) override {
+class BLERxCB : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
     bleRxBuffer = c->getValue().c_str();
     bleRxReady  = true;
   }
@@ -242,23 +239,23 @@ class BLERxCB : public BLECharacteristicCallbacks {
 void startBLE() {
   cpuTurbo();
   if (bleServer) return; // déjà démarré
-  BLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
-  bleServer = BLEDevice::createServer();
+  NimBLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
+  bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new BLEServerCB());
 
-  BLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
+  NimBLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
 
-  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
-  bleTxChar->addDescriptor(new BLE2902());
+  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
+  // NimBLE gère automatiquement le descripteur CCCD (BLE2902), pas besoin de l'ajouter manuellement
 
-  BLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, BLECharacteristic::PROPERTY_WRITE);
+  NimBLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, NIMBLE_PROPERTY::WRITE);
   rxChar->setCallbacks(new BLERxCB());
 
   svc->start();
 
   // Configure l'advertising : inclut l'UUID du service NUS et le nom du périphérique
   // sans cela le périphérique n'est pas identifiable par les scanners BLE (LightBlue, nRF Connect…)
-  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_SERVICE_UUID);
   adv->setScanResponse(true);   // inclut le nom dans la réponse de scan active
   adv->start();
@@ -267,7 +264,7 @@ void startBLE() {
 void stopBLE() {
   if (!bleServer) return;
   bleServer->getAdvertising()->stop();
-  BLEDevice::deinit(true);
+  NimBLEDevice::deinit(true);
   bleServer    = nullptr;
   bleTxChar    = nullptr;
   bleConnected = false;
