@@ -63,8 +63,8 @@ bool maintmode = true;
 int stationgateway = 1;
 long TOGATE_COMMAND_TIMEOUT = 60000;
 long NETIO_TIMEOUT     = 30000;   // ms sans activité avant fermeture automatique du tunnel
-const int filetimeout = 300;
-const int filetxtimeout = 60;
+int filetimeout = 300;
+int filetxtimeout = 60;
 
 // Niveaux de sortie série : 0=rien, 1=normal, 2=verbose, 3=debug
 #define LOG_NONE    0
@@ -1868,6 +1868,8 @@ void readsd(bool allrecover){
       { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
       { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt; }
+      { int ft = getValue(sdtopar, ':', 12).toInt(); if(ft > 0) filetimeout = ft; }
+      { int fxt = getValue(sdtopar, ':', 13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1927,6 +1929,10 @@ void writetosd(){
     varptosd += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode);
     varptosd += ":";
     varptosd += NETIO_TIMEOUT;
+    varptosd += ":";
+    varptosd += filetimeout;
+    varptosd += ":";
+    varptosd += filetxtimeout;
     varptosd += ":";
 
     testFile = SD.open("/p.cfg", FILE_WRITE);
