@@ -475,6 +475,7 @@
   <div class="serial-actions" id="serial-actions" style="display:none">
     <button class="btn btn-secondary" onclick="serialReadCfg()">⬇ Lire p.cfg depuis la station</button>
     <button class="btn btn-secondary" onclick="serialWriteCfg()">⬆ Écrire p.cfg vers la station</button>
+    <button class="btn btn-secondary" onclick="serialStam()">▶ Démarrer la station (stam)</button>
   </div>
   <div id="serial-log"></div>
   <div class="serial-cmd-row" id="serial-cmd-row">
@@ -1103,6 +1104,19 @@ async function serialReadCfg() {
     document.getElementById('raw-preview').style.display = 'block';
     document.getElementById('raw-preview').textContent = '> ' + body;
     serialLog('✓ Configuration chargée (' + Object.keys(result.data).length + ' paramètres)', 'ok');
+  } catch(e) {
+    serialLog('⚠ ' + e.message, 'err');
+  } finally { _serialSetBtns(false); }
+}
+
+async function serialStam() {
+  if (!_serialWriter) return;
+  _serialSetBtns(true);
+  try {
+    const ts = Math.floor(Date.now() / 1000);
+    serialLog('→ stam:' + ts);
+    await _serialSend('stam:' + ts + '\n');
+    serialLog('✓ Commande stam envoyée (timestamp=' + ts + ')', 'ok');
   } catch(e) {
     serialLog('⚠ ' + e.message, 'err');
   } finally { _serialSetBtns(false); }
