@@ -12,6 +12,8 @@
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHT10.h>
 #include <NimBLEDevice.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 Adafruit_BMP280 bmp;
 Adafruit_AHT10 aht;
@@ -43,6 +45,9 @@ static uint8_t gf_log_tbl[256];
 
 Adafruit_BME680 bme;
 
+const int oneWireBus = 3; 
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
 // Variable Cron
 
 String crontabString;
@@ -117,6 +122,7 @@ bool sensorstart = false;
 bool sensor_bme680 = false;
 bool sensor_aht20 = false;
 bool sensor_bmp280 = false;
+bool sensor_ds18b20 = false;
 int lastMinuteChecked = -1;
 int rtmapdel = 0, fpingdel = 0;
 unsigned long starttime;
@@ -1741,6 +1747,10 @@ void startsensor(){
                     Adafruit_BMP280::FILTER_X16,       /* Filtering. */
                     Adafruit_BMP280::STANDBY_MS_500);  /* Standby time. */
   }
+  if (sensor_ds18b20) {
+    sensors.begin();  
+    logV("sensor:DS18b20 ok");
+  }
 }
 
 void measuretodump(int ver){
@@ -1796,6 +1806,16 @@ void measuretodump(int ver){
     tosdarg += (rtc.getLocalEpoch());
     tosdarg += ";";
     logV("sensor:v3 " + tosdarg);
+  }
+  if(ver == 4){
+    sensors.requestTemperatures(); 
+    delay(50);
+    tosdarg += "ntemp:";
+    tosdarg += sensors.getTempCByIndex(0);
+    tosdarg += ";ntime:";
+    tosdarg += (rtc.getLocalEpoch());
+    tosdarg += ";";
+    logV("sensor:v4 " + tosdarg);
   }
 
     delay(50);
@@ -1900,7 +1920,8 @@ void readsd(bool allrecover){
       sensor_bme680 = getValue(sdtosensor, ':', 1).toInt() == 1;
       sensor_aht20  = getValue(sdtosensor, ':', 3).toInt() == 1;
       sensor_bmp280 = getValue(sdtosensor, ':', 5).toInt() == 1;
-      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280));
+      sensor_ds18b20 = getValue(sdtosensor, ':', 7).toInt() == 1;
+      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280) + " DS18b20:" + String(sensor_ds18b20));
 
       initGaloisField();
 
@@ -1999,6 +2020,8 @@ void writeSensorCfg(){
   varstosd += sensor_aht20  ? "1" : "0";
   varstosd += ":bmp280:";
   varstosd += sensor_bmp280 ? "1" : "0";
+  varstosd += ":ds18b20:";
+  varstosd += sensor_ds18b20 ? "1" : "0";
 
   File sensorFile = SD.open("/sensor.cfg", FILE_WRITE);
   if (sensorFile) {
@@ -3184,6 +3207,7 @@ void interpreter(String msg){
     s += sensor_bme680 ? 1 : 0; s += ":";
     s += sensor_aht20  ? 1 : 0; s += ":";
     s += sensor_bmp280 ? 1 : 0; s += ":";
+    s += sensor_ds18b20 ? 1 : 0; s += ":";
     ioOutput("SENSOR:" + s);
   }
   // ── setsensor : reçoit la config capteurs, applique et sauvegarde ──
@@ -3197,6 +3221,7 @@ void interpreter(String msg){
       sensor_bme680 = getValue(msg,':',1).toInt() == 1;
       sensor_aht20  = getValue(msg,':',2).toInt() == 1;
       sensor_bmp280 = getValue(msg,':',3).toInt() == 1;
+      sensor_ds18b20 = getValue(msg,':',4).toInt() == 1;
       writeSensorCfg();
       ioOutput("SENSOR:OK");
     }
