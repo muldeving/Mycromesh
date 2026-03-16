@@ -16,5 +16,11 @@
     "label": "BMP280",
     "desc":  "Pression atmosphérique et température. Idéal en combinaison avec l'AHT20.",
     "tip":   "Capteur Bosch — pression et température"
+  },
+  {
+    "key":   "ds18b20",
+    "label": "DS18b20",
+    "desc":  "Température",
+    "tip":   "Capteur Dallas — température"
   }
 ]
