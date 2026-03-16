@@ -12,6 +12,8 @@
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHT10.h>
 #include <NimBLEDevice.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 Adafruit_BMP280 bmp;
 Adafruit_AHT10 aht;
@@ -43,6 +45,9 @@ static uint8_t gf_log_tbl[256];
 
 Adafruit_BME680 bme;
 
+const int oneWireBus = 3; 
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
 // Variable Cron
 
 String crontabString;
@@ -114,6 +119,10 @@ int filesender = -1;
 int filereceivientstation = -1;
 unsigned long ltgdel = 0;
 bool sensorstart = false;
+bool sensor_bme680 = false;
+bool sensor_aht20 = false;
+bool sensor_bmp280 = false;
+bool sensor_ds18b20 = false;
 int lastMinuteChecked = -1;
 int rtmapdel = 0, fpingdel = 0;
 unsigned long starttime;
@@ -1717,25 +1726,31 @@ String extractvalue(String indump, String rshval){
 }
 
 void startsensor(){
-  if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
+  if (sensor_bme680) {
+    if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
+    bme.setTemperatureOversampling(BME680_OS_8X);
+    bme.setHumidityOversampling(BME680_OS_2X);
+    bme.setPressureOversampling(BME680_OS_4X);
+    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+    bme.setGasHeater(320, 150);
+  }
 
-  bme.setTemperatureOversampling(BME680_OS_8X);
-  bme.setHumidityOversampling(BME680_OS_2X);
-  bme.setPressureOversampling(BME680_OS_4X);
-  bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-  bme.setGasHeater(320, 150);
+  if (sensor_aht20) {
+    if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
+  }
 
-  if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
-
-  if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
- 
-/* Default settings from datasheet. */
-bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, /* Operating Mode. */
-Adafruit_BMP280::SAMPLING_X2, /* Temp. oversampling */
-Adafruit_BMP280::SAMPLING_X16, /* Pressure oversampling */
-Adafruit_BMP280::FILTER_X16, /* Filtering. */
-Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
-  
+  if (sensor_bmp280) {
+    if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                    Adafruit_BMP280::SAMPLING_X2,      /* Temp. oversampling */
+                    Adafruit_BMP280::SAMPLING_X16,     /* Pressure oversampling */
+                    Adafruit_BMP280::FILTER_X16,       /* Filtering. */
+                    Adafruit_BMP280::STANDBY_MS_500);  /* Standby time. */
+  }
+  if (sensor_ds18b20) {
+    sensors.begin();  
+    logV("sensor:DS18b20 ok");
+  }
 }
 
 void measuretodump(int ver){
@@ -1791,6 +1806,16 @@ void measuretodump(int ver){
     tosdarg += (rtc.getLocalEpoch());
     tosdarg += ";";
     logV("sensor:v3 " + tosdarg);
+  }
+  if(ver == 4){
+    sensors.requestTemperatures(); 
+    delay(50);
+    tosdarg += "ntemp:";
+    tosdarg += sensors.getTempCByIndex(0);
+    tosdarg += ";ntime:";
+    tosdarg += (rtc.getLocalEpoch());
+    tosdarg += ";";
+    logV("sensor:v4 " + tosdarg);
   }
 
     delay(50);
@@ -1884,6 +1909,20 @@ void readsd(bool allrecover){
       logD("cron:" + sdtocron);
       crontabString = sdtocron;
 
+      myFile = SD.open("/sensor.cfg", FILE_READ);
+      String sdtosensor = "";
+      if (myFile) {
+        while (myFile.available()) {
+          sdtosensor += (char)myFile.read();
+        }
+        myFile.close();
+      }
+      sensor_bme680 = getValue(sdtosensor, ':', 1).toInt() == 1;
+      sensor_aht20  = getValue(sdtosensor, ':', 3).toInt() == 1;
+      sensor_bmp280 = getValue(sdtosensor, ':', 5).toInt() == 1;
+      sensor_ds18b20 = getValue(sdtosensor, ':', 7).toInt() == 1;
+      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280) + " DS18b20:" + String(sensor_ds18b20));
+
       initGaloisField();
 
       sdToLora();
@@ -1968,7 +2007,29 @@ void writetosd(){
     else{
       logN("[ERREUR SD] Impossible d'écrire /e.cfg (état)");
     }
+
+    writeSensorCfg();
+
     sdToLora();
+}
+
+void writeSensorCfg(){
+  String varstosd = "bme680:";
+  varstosd += sensor_bme680 ? "1" : "0";
+  varstosd += ":aht20:";
+  varstosd += sensor_aht20  ? "1" : "0";
+  varstosd += ":bmp280:";
+  varstosd += sensor_bmp280 ? "1" : "0";
+  varstosd += ":ds18b20:";
+  varstosd += sensor_ds18b20 ? "1" : "0";
+
+  File sensorFile = SD.open("/sensor.cfg", FILE_WRITE);
+  if (sensorFile) {
+    sensorFile.println(varstosd);
+    sensorFile.close();
+  } else {
+    logN("[ERREUR SD] Impossible d'écrire /sensor.cfg");
+  }
 }
 
 bool exportcache() {
@@ -3138,6 +3199,31 @@ void interpreter(String msg){
       { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
       writetosd();
       ioOutput("CFG:OK");
+    }
+  }
+  // ── getsensor : envoie l'état des capteurs au configurateur ──
+  if(cmd == "getsensor"){
+    String s;
+    s += sensor_bme680 ? 1 : 0; s += ":";
+    s += sensor_aht20  ? 1 : 0; s += ":";
+    s += sensor_bmp280 ? 1 : 0; s += ":";
+    s += sensor_ds18b20 ? 1 : 0; s += ":";
+    ioOutput("SENSOR:" + s);
+  }
+  // ── setsensor : reçoit la config capteurs, applique et sauvegarde ──
+  // Format attendu : setsensor:<bme680>:<aht20>:<bmp280>
+  if(cmd == "setsensor"){
+    int fieldCount = 0;
+    for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
+    if(fieldCount < 3){
+      ioOutput("SENSOR:ERR:format invalide (" + String(fieldCount) + "/3 champs)");
+    } else {
+      sensor_bme680 = getValue(msg,':',1).toInt() == 1;
+      sensor_aht20  = getValue(msg,':',2).toInt() == 1;
+      sensor_bmp280 = getValue(msg,':',3).toInt() == 1;
+      sensor_ds18b20 = getValue(msg,':',4).toInt() == 1;
+      writeSensorCfg();
+      ioOutput("SENSOR:OK");
     }
   }
   if(cmd == "data"){
