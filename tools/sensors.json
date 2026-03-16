@@ -1,0 +1,20 @@
+[
+  {
+    "key":   "bme680",
+    "label": "BME680",
+    "desc":  "Température, humidité, pression atmosphérique et qualité de l'air (gaz VOC).",
+    "tip":   "Capteur Bosch multi-mesures haute précision"
+  },
+  {
+    "key":   "aht20",
+    "label": "AHT20",
+    "desc":  "Température et humidité relative. Souvent utilisé en complément du BMP280.",
+    "tip":   "Capteur Aosong — température et humidité"
+  },
+  {
+    "key":   "bmp280",
+    "label": "BMP280",
+    "desc":  "Pression atmosphérique et température. Idéal en combinaison avec l'AHT20.",
+    "tip":   "Capteur Bosch — pression et température"
+  }
+]

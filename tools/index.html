@@ -1491,33 +1491,27 @@ function switchTab(tab) {
 }
 
 // ═══════════════════════════════════════════════════
-//  Capteurs (sensor.cfg)
+//  Capteurs (sensor.cfg) — définitions chargées depuis sensors.json
 // ═══════════════════════════════════════════════════
-const SENSORS = [
-  {
-    key: 'bme680',
-    label: 'BME680',
-    desc: 'Température, humidité, pression atmosphérique et qualité de l\'air (gaz VOC).',
-    tip: 'Capteur Bosch multi-mesures haute précision'
-  },
-  {
-    key: 'aht20',
-    label: 'AHT20',
-    desc: 'Température et humidité relative. Souvent utilisé en complément du BMP280.',
-    tip: 'Capteur Aosong — température et humidité'
-  },
-  {
-    key: 'bmp280',
-    label: 'BMP280',
-    desc: 'Pression atmosphérique et température. Idéal en combinaison avec l\'AHT20.',
-    tip: 'Capteur Bosch — pression et température'
-  }
-];
+let SENSORS     = [];   // rempli par loadSensorsJson()
+let sensorState = {};   // reconstruit après chargement
 
-const sensorState = { bme680: false, aht20: false, bmp280: false };
+async function loadSensorsJson() {
+  try {
+    const res = await fetch('sensors.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    SENSORS = await res.json();
+  } catch (e) {
+    console.warn('Impossible de charger sensors.json :', e);
+    SENSORS = [];
+  }
+  sensorState = {};
+  SENSORS.forEach(s => { sensorState[s.key] = false; });
+  buildSensorUI();
+}
 
 function buildSensorCfgString() {
-  return 'bme680:' + +sensorState.bme680 + ':aht20:' + +sensorState.aht20 + ':bmp280:' + +sensorState.bmp280;
+  return SENSORS.map(s => s.key + ':' + +sensorState[s.key]).join(':');
 }
 
 function updateSensorOutput() {
@@ -1537,17 +1531,17 @@ function updateSensorOutput() {
 }
 
 function parseSensorCfg(text) {
-  const clean = text.trim().replace(/\r/g, '');
-  const parts = clean.split(':');
-  const result = { bme680: false, aht20: false, bmp280: false };
+  const clean  = text.trim().replace(/\r/g, '');
+  const parts  = clean.split(':');
+  const result = {};
+  SENSORS.forEach(s => { result[s.key] = false; });
   for (let i = 0; i < parts.length - 1; i++) {
-    if (parts[i] === 'bme680') result.bme680 = parts[i + 1] === '1';
-    if (parts[i] === 'aht20')  result.aht20  = parts[i + 1] === '1';
-    if (parts[i] === 'bmp280') result.bmp280 = parts[i + 1] === '1';
+    const s = SENSORS.find(x => x.key === parts[i]);
+    if (s) result[s.key] = parts[i + 1] === '1';
   }
-  const found = Object.values(result).some((_, idx) => parts.includes(['bme680','aht20','bmp280'][idx]));
-  if (!parts.includes('bme680') && !parts.includes('aht20') && !parts.includes('bmp280')) {
-    return { ok: false, msg: 'Format invalide — clés bme680/aht20/bmp280 introuvables.' };
+  const anyFound = parts.some(p => SENSORS.find(s => s.key === p));
+  if (!anyFound) {
+    return { ok: false, msg: 'Format invalide — aucune clé de capteur reconnue.' };
   }
   return { ok: true, data: result, raw: clean };
 }
@@ -1638,15 +1632,13 @@ async function serialReadSensor() {
     if (body.startsWith('ERR:')) { serialLog('⚠ ' + body.slice(4), 'err'); return; }
     const vals = body.split(':').filter(v => v !== '');
     if (vals.length < 3) { serialLog('⚠ Réponse SENSOR invalide : ' + body, 'err'); return; }
-    sensorState.bme680 = vals[0] === '1';
-    sensorState.aht20  = vals[1] === '1';
-    sensorState.bmp280 = vals[2] === '1';
+    SENSORS.forEach((s, i) => { sensorState[s.key] = vals[i] === '1'; });
     buildSensorUI();
     const raw = buildSensorCfgString();
     document.getElementById('sensor-file-status').innerHTML  = '<span class="status-ok">✓ Configuration lue depuis le port série</span>';
     document.getElementById('sensor-raw-preview').style.display = 'block';
     document.getElementById('sensor-raw-preview').textContent   = '> ' + raw;
-    serialLog('✓ Configuration capteurs chargée (bme680=' + +sensorState.bme680 + ' aht20=' + +sensorState.aht20 + ' bmp280=' + +sensorState.bmp280 + ')', 'ok');
+    serialLog('✓ Configuration capteurs chargée (' + SENSORS.map(s => s.key + '=' + +sensorState[s.key]).join(' ') + ')', 'ok');
   } catch(e) {
     serialLog('⚠ ' + e.message, 'err');
   } finally { _sensorSetBtns(false); }
@@ -1656,7 +1648,7 @@ async function serialWriteSensor() {
   if (!_serialWriter) return;
   _sensorSetBtns(true);
   try {
-    const cmd = 'setsensor:' + +sensorState.bme680 + ':' + +sensorState.aht20 + ':' + +sensorState.bmp280 + ':';
+    const cmd = 'setsensor:' + SENSORS.map(s => +sensorState[s.key]).join(':') + ':';
     serialLog('→ ' + cmd, 'sent');
     await _serialSend(cmd + '\n');
     const line = await _waitForPrefix('SENSOR:');
@@ -1686,9 +1678,7 @@ function copySensorToClipboard() {
 }
 
 function resetSensorAll() {
-  sensorState.bme680 = false;
-  sensorState.aht20  = false;
-  sensorState.bmp280 = false;
+  SENSORS.forEach(s => { sensorState[s.key] = false; });
   buildSensorUI();
 }
 
@@ -1697,7 +1687,7 @@ function resetSensorAll() {
 // ═══════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   buildUI();
-  buildSensorUI();
+  loadSensorsJson();
 
   // ── Dropzone p.cfg ──
   const dz = document.getElementById('dropzone');
