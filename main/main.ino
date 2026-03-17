@@ -146,6 +146,15 @@ unsigned long ltgdelfile = 0;
 int nbtogatefailfile = 0;
 int togateCountFile = 0;
 unsigned long lastair;
+int rxglob = 0;
+int rxbrd = 0;
+int rxloc = 0;
+int dijktx = 0;
+int dijkrx = 0;
+int dijkhop = 0;
+int resend1 = 0;
+int resend2 = 0;
+int txcnt = 0;
 
 // Variables diffusion réseau (broadcast fichier)
 bool broadcastMode = false;         // Station en mode réception diffusion
@@ -671,6 +680,12 @@ void checkAndRemoveOldEntries() {
         // Augmenter nbtrysend et mettre à jour timesend
         entryList[i].nbtrysend++;
         entryList[i].timesend = currentMillis;
+        if(entryList[i].nbtrysend == 2){
+          resend1 ++;
+        }
+        if(entryList[i].nbtrysend == 3){
+          resend2 ++;
+        }
         logD("entry:retry id=" + entryList[i].id + " n=" + String(entryList[i].nbtrysend));
         dijkstra(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt(), entryList[i].msgtosend);
         i++; // Passer à l'entrée suivante
@@ -1627,6 +1642,9 @@ void startprocedure(){
 }
 
 String exportdata(String ver){
+  if(ver == 0){
+    interpreter("gmea:0");
+  }
   delay(50);
   loraToSD();
   File myFile;
@@ -1759,6 +1777,50 @@ void measuretodump(int ver){
     sensorstart = true;
   }
   String tosdarg = "";
+  if(ver == 0){    
+    float batt = (analogReadMilliVolts(0));
+    tosdarg += "nbatt:";
+    tosdarg += String(batt/500);
+    tosdarg += ";";
+    tosdarg += "tstartstat:";
+    tosdarg += String(startstat);
+    tosdarg += ";";
+    tosdarg += "tmaintmode:";
+    tosdarg += String(maintmode);
+    tosdarg += ";";
+    tosdarg += "nrxglob:";
+    tosdarg += rxglob;
+    tosdarg += ";";
+    tosdarg += "nrxbrd:";
+    tosdarg += rxbrd;
+    tosdarg += ";";
+    tosdarg += "nrxloc:";
+    tosdarg += rxloc;
+    tosdarg += ";";
+    tosdarg += "ndijktx:";
+    tosdarg += dijktx;
+    tosdarg += ";";
+    tosdarg += "ndijkrx:";
+    tosdarg += dijkrx;
+    tosdarg += ";";
+    tosdarg += "ndijkhop:";
+    tosdarg += dijkhop;
+    tosdarg += ";";
+    tosdarg += "nresend1:";
+    tosdarg += resend1;
+    tosdarg += ";";
+    tosdarg += "nresend2:";
+    tosdarg += resend2;
+    tosdarg += ";";
+    tosdarg += "ntxcnt:";
+    tosdarg += txcnt;
+    tosdarg += ";";
+    tosdarg += "ntime:";
+    tosdarg += (rtc.getLocalEpoch());
+    tosdarg += ";";
+
+    logV("sensor:v0 " + tosdarg);
+  }
   if(ver == 1){
     unsigned long endTime = bme.beginReading();
     if (endTime == 0) {
@@ -1930,6 +1992,7 @@ void readsd(bool allrecover){
 }
 
 void writetosd(){
+    interpreter("gmea:0");
     delay(50);
     loraToSD();
     String vartosd = exportEdgesAstmapCommand();
@@ -2759,6 +2822,7 @@ void sendMessage(bool wake, String outgoing, int destination) {
   lora.waitTransmitDone();
   lora.receive();
   msgCount++;                           // increment message ID
+  txcnt ++;
   actiontimer = (millis()/1000);
   lastair = millis();
 }
@@ -2787,14 +2851,14 @@ void onReceive() {
     ;
     return;                             // skip rest of function
   }
-
+  rxglob ++;
   // if the recipient isn't this device or broadcast,
-  if (recipient != localAddress && recipient != 0) {
+  if (recipient != localAddress && recipient != 0) {    
     return;                             // skip rest of function
   }
-
+  
   if (recipient == 0) {
-
+    rxbrd ++;
     if (getValue(incoming, ':', 0) == "umap") {
       if (!findValue(getValue(incoming, ':', 1))) {
         int pcount = 3;
@@ -2903,6 +2967,7 @@ void onReceive() {
 
     return;
   }
+  rxloc ++;
   scheduleCommand(15, incoming);
   lastair = millis();
 }
@@ -3282,6 +3347,7 @@ void interpreter(String msg){
     }  
     if(cmd == "dijk"){
       if(getValue(msg, ':', 2).toInt() != localAddress){
+        dijkrx ++;
         String tempinload = (msg.substring((5+9+(getValue(msg, ':', 1).length())+(getValue(msg, ':', 2).length())+(getValue(msg, ':', 3).length())+3), msg.length()));
         logD("dijk:rx id=" + getValue(msg, ':', 4) + " len=" + String(tempinload.length()) + "/" + getValue(msg, ':', 3));
         String rxok = "trsms:";
@@ -3298,6 +3364,7 @@ void interpreter(String msg){
         }
       }
       if(getValue(msg, ':', 1).toInt() != localAddress){
+        dijkhop ++;
         String msgrt = "dijk:";
         msgrt += getValue(msg, ':', 1);
         msgrt += ":";
@@ -3383,6 +3450,7 @@ void interpreter(String msg){
         large(dijk, getValue(msg, ':', 1).toInt());
       }
       else{
+        dijktx ++;
         String tempid = generateid();
         String dijk = "dijk:";
         dijk += getValue(msg, ':', 1).toInt();

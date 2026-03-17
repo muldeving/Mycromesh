@@ -1,1 +1,1 @@
-1 ntemp:nhum:npres:nres:ntime;2 test:tsp;3 ntemp:nhum:npres:ntime;4 ntemp:ntime
+0 nbatt:tstartstat:tmaintmode:nrxglob:nrxbrd:nrxloc:ndijktx:ndijkrx:ndijkhop:nresend1:nresend2:ntxcnt:ntime;1 ntemp:nhum:npres:nres:ntime;2 test:tsp;3 ntemp:nhum:npres:ntime;4 ntemp:ntime
