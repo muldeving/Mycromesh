@@ -2642,7 +2642,7 @@ void setup() {
   // firmware à l'ensemble du réseau 5 minutes après le boot
   if (prefs.getBool("justrestarted", false)) {
     prefs.putBool("justrestarted", false);
-    scheduleCommand(300000, "fwver");  // 5 min = 300 000 ms
+    scheduleCommand(300000 + (20 * localAddress), "fwver");  // 5 min + délai proportionnel au rang
     logN("[MÀJU RÉSEAU] Post-mise à jour — diffusion de version planifiée dans 5 min");
   }
 
