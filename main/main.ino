@@ -2572,6 +2572,7 @@ bool doFirmwareUpdate() {
   }
 
   logN("[MISE À JOUR] Succès — " + String(written) + " octets écrits, redémarrage dans 1s...");
+  prefs.putBool("justrestarted", true);  // Signale qu'une diffusion de version est requise au boot
   delay(1000);
   ESP.restart();
   return true;
@@ -2636,6 +2637,15 @@ void setup() {
 
   logN("[OK] Noeud #" + String(localAddress) + " démarré — firmware " + FIRMWARE_VERSION);
   actiontimer = (millis()/1000);
+
+  // Si ce démarrage fait suite à une mise à jour OTA, planifie la diffusion de la version
+  // firmware à l'ensemble du réseau 30 secondes après le boot
+  if (prefs.getBool("justrestarted", false)) {
+    prefs.putBool("justrestarted", false);
+    scheduleCommand(30000 + (80 * localAddress), "fwver");  // 5 min + délai proportionnel au rang
+    logN("[MÀJU RÉSEAU] Post-mise à jour — diffusion de version planifiée dans 30 sec");
+  }
+
   lora.receive();
 }
 
@@ -2913,6 +2923,33 @@ void onReceive() {
         String rbcok = "trsms:0:";
         rbcok += incoming;
         scheduleCommand(20 * localAddress, rbcok);
+      }
+    }
+
+    // --- Diffusion de mise à jour firmware : bupd:ID ---
+    // Reçu par toutes les stations : planifie l'upgrade 60 s après réception et rétransmet
+    if (getValue(incoming, ':', 0) == "bupd") {
+      String bupdid = getValue(incoming, ':', 1);
+      if (!findValue(bupdid)) {
+        addValue(bupdid);
+        logN("[MÀJU RÉSEAU] Déclenchement de mise à jour reçu — upgrade dans 30 s");
+        scheduleCommand(30000, "upgrade");
+        String rbupd = "trsms:0:";
+        rbupd += incoming;
+        scheduleCommand(20 * localAddress, rbupd);
+      }
+    }
+
+    // --- Diffusion de version firmware après mise à jour : fwver:ID:VERSION:STATION ---
+    // Reçu par toutes les stations après le redémarrage post-mise à jour d'une station
+    if (getValue(incoming, ':', 0) == "fwver") {
+      String fwverid = getValue(incoming, ':', 1);
+      if (!findValue(fwverid)) {
+        addValue(fwverid);
+        logN("[MÀJU RÉSEAU] Station #" + getValue(incoming, ':', 3) + " tourne maintenant sur le firmware " + getValue(incoming, ':', 2));
+        String rfwver = "trsms:0:";
+        rfwver += incoming;
+        scheduleCommand(20 * localAddress, rfwver);
       }
     }
 
@@ -3804,6 +3841,38 @@ void interpreter(String msg){
       addValue(tempid);  // Éviter de retraiter notre propre bcok si reçu en écho
       sendMessage(0, bcok, 0);  // Diffusion sans réveil
       logV("bcok:" + getValue(msg, ':', 1));
+    }
+
+    // ================================================================
+    // DIFFUSION DE MISE À JOUR FIRMWARE : bupd
+    // Déclenche sur l'ensemble du réseau une mise à jour 60 s après réception
+    // ================================================================
+    if (cmd == "bupd") {
+      String tempid = generateid();
+      String bupd = "bupd:";
+      bupd += tempid;
+      addValue(tempid);
+      sendMessage(0, bupd, 0);  // Diffusion sans réveil
+      logN("[MÀJU RÉSEAU] Diffusion de mise à jour envoyée — chaque station upgradée dans 60 s");
+      scheduleCommand(30000, "upgrade");  // La station émettrice upgradera également
+    }
+
+    // ================================================================
+    // DIFFUSION DE VERSION FIRMWARE : fwver
+    // Diffuse la version du firmware actuel à l'ensemble du réseau
+    // (planifié automatiquement 5 min après une mise à jour réussie)
+    // ================================================================
+    if (cmd == "fwver") {
+      String tempid = generateid();
+      String fwver = "fwver:";
+      fwver += tempid;
+      fwver += ":";
+      fwver += FIRMWARE_VERSION;
+      fwver += ":";
+      fwver += localAddress;
+      addValue(tempid);
+      sendMessage(0, fwver, 0);  // Diffusion sans réveil
+      logN("[MÀJU RÉSEAU] Diffusion de version firmware : " + FIRMWARE_VERSION);
     }
 
     // ================================================================
