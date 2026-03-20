@@ -2,7 +2,7 @@
 
 Systeme de reseau mesh LoRa pour noeuds IoT distribues, base sur ESP32-C3.
 
-**Version firmware :** 1.3.0
+**Version firmware :** 1.4.0
 
 ---
 
@@ -20,14 +20,17 @@ Systeme de reseau mesh LoRa pour noeuds IoT distribues, base sur ESP32-C3.
 10. [Correction d'erreurs Reed-Solomon](#correction-derreurs-reed-solomon)
 11. [Planificateur Cron](#planificateur-cron)
 12. [Gestion d'energie](#gestion-denergie)
-13. [Capteur BME680](#capteur-bme680)
+13. [Capteurs](#capteurs)
 14. [Systeme de passerelle](#systeme-de-passerelle)
 15. [Procedure de demarrage](#procedure-de-demarrage)
 16. [Mise a jour firmware (OTA)](#mise-a-jour-firmware-ota)
-17. [Fichiers carte SD](#fichiers-carte-sd)
-18. [Parametres configurables](#parametres-configurables)
-19. [Limites du systeme](#limites-du-systeme)
-20. [Reference des fonctions](#reference-des-fonctions)
+17. [Diffusion reseau (broadcast)](#diffusion-reseau-broadcast)
+18. [Tunnel reseau E/S (netio)](#tunnel-reseau-es-netio)
+19. [Mode Bluetooth (BLE)](#mode-bluetooth-ble)
+20. [Fichiers carte SD](#fichiers-carte-sd)
+21. [Parametres configurables](#parametres-configurables)
+22. [Limites du systeme](#limites-du-systeme)
+23. [Reference des fonctions](#reference-des-fonctions)
 
 ---
 
@@ -53,15 +56,23 @@ Le reseau est auto-organisable : chaque noeud decouvre ses voisins, partage la t
 | ESP32-C3 | Microcontroleur principal |
 | Module LoRa | Radio 433 MHz (SX1276/SX1278 compatible) |
 | Carte SD | Stockage de configuration et donnees |
-| BME680 | Capteur environnemental (optionnel) |
+| BME680 | Capteur environnemental temperature/humidite/pression/gaz (optionnel) |
+| AHT20 | Capteur temperature/humidite I2C (optionnel) |
+| BMP280 | Capteur pression/temperature I2C (optionnel) |
+| DS18B20 | Capteur temperature OneWire (optionnel) |
 
 ### Dependances logicielles (bibliotheques Arduino)
 
-- `LoRa` - Communication radio LoRa
+- `LiteLora` - Driver LoRa leger (bibliotheque embarquee)
 - `SPI` - Bus SPI pour LoRa et SD
 - `SD` - Gestion de la carte SD
 - `ESP32Time` - Horloge temps reel logicielle
-- `Adafruit_BME680` / `Adafruit_Sensor` - Capteur environnemental
+- `Adafruit_BME680` / `Adafruit_Sensor` - Capteur BME680
+- `Adafruit_BMP280` - Capteur BMP280
+- `Adafruit_AHT10` - Capteur AHT20
+- `NimBLEDevice` - Bluetooth Low Energy (Nordic UART Service)
+- `OneWire` / `DallasTemperature` - Capteur DS18B20
+- `Wire` - Bus I2C
 - `Preferences` - Stockage persistant NVS
 - `Update` - Mise a jour firmware OTA
 - `esp_sleep` / `driver/gpio` - Gestion du deep sleep
@@ -78,7 +89,8 @@ Pin  8  ->  IRQ LoRa (Interruption de reception)
 Pin  7  ->  CS Carte SD (SPI Chip Select)
 Pin 20  ->  Controle alimentation module LoRa
 Pin  1  ->  Entree de reveil deep sleep (GPIO wakeup)
-I2C     ->  Capteur BME680
+Pin  3  ->  Bus OneWire (capteur DS18B20)
+I2C     ->  Capteurs BME680, AHT20, BMP280
 ```
 
 Le bus SPI est partage entre le module LoRa et la carte SD. Le firmware commute les lignes GPIO (pins 20 et 21) pour multiplexer l'acces aux deux peripheriques.
@@ -111,6 +123,23 @@ La configuration se fait via des fichiers sur la carte SD. Au premier demarrage,
 | `maintmode` | true | Mode maintenance (empeche le deep sleep) |
 | `stationgateway` | 1 | Adresse de la passerelle |
 | `TOGATE_COMMAND_TIMEOUT` | 60000 ms | Timeout des commandes passerelle |
+| `ioMode` | 0 (USB) | Canal E/S (0=USB, 1=Bluetooth) |
+| `NETIO_TIMEOUT` | 300000 ms | Timeout d'inactivite du tunnel reseau |
+
+### Configuration des capteurs
+
+Les capteurs actifs sont configures dans `/sensor.cfg` avec le format :
+
+```
+bme680:<0|1>:aht20:<0|1>:bmp280:<0|1>:ds18b20:<0|1>
+```
+
+Exemple pour activer le BME680 et le BMP280 :
+```
+bme680:1:aht20:0:bmp280:1:ds18b20:0
+```
+
+La commande `getsensor` affiche la configuration actuelle et `setsensor:<bme680>:<aht20>:<bmp280>:<ds18b20>` la modifie a chaud.
 
 ---
 
@@ -198,6 +227,10 @@ commande:parametre1:parametre2:...
 |----------|--------|-------------|
 | `read` | `read` | Recharge la configuration depuis la carte SD |
 | `write` | `write` | Sauvegarde la configuration sur la carte SD |
+| `getcfg` | `getcfg` | Affiche la configuration complete courante |
+| `setcfg` | `setcfg:<params>` | Applique une configuration complete |
+| `getsensor` | `getsensor` | Affiche la configuration des capteurs |
+| `setsensor` | `setsensor:<bme680>:<aht20>:<bmp280>:<ds18b20>` | Active/desactive les capteurs |
 | `maint` | `maint` | Active le mode maintenance (empeche le deep sleep) |
 | `norm` | `norm` | Desactive le mode maintenance (autorise le deep sleep) |
 | `star` | `star` | Lance la procedure de demarrage reseau |
@@ -205,12 +238,33 @@ commande:parametre1:parametre2:...
 | `upgrade` | `upgrade` | Applique une mise a jour firmware depuis la SD |
 | `version` | `version` | Affiche la version du firmware |
 | `parm` | `parm:<nom>:<valeur>` | Modifie un parametre en cours d'execution |
+| `slvl` | `slvl:<none\|normal\|verbose\|debug>` | Regle le niveau de log |
+| `iomd` | `iomd:<usb\|bt>` | Change le canal E/S (USB ou Bluetooth) |
 | `sho` | `sho` | Affiche l'etat du mode maintenance |
 | `gate` | `gate` | Affiche l'adresse de la station passerelle |
 | `cachestate` | `cachestate` | Affiche l'etat du cache passerelle |
 | `cout` | `cout` | Force l'export du cache passerelle |
 | `mkdir` | `mkdir:<chemin>` | Cree un repertoire sur la carte SD |
+| `rmdir` | `rmdir:<chemin>` | Supprime un repertoire sur la carte SD |
+| `rm` | `rm:<chemin>` | Supprime un fichier sur la carte SD |
+| `cp` | `cp:<src>:<dossierDest>` | Copie un fichier sur la carte SD |
+| `mv` | `mv:<src>:<dossierDest>` | Deplace un fichier sur la carte SD |
+| `ls` | `ls:<chemin>` | Liste le contenu d'un repertoire SD |
 | `adrc` | `adrc:<delai_ms>:<commande>` | Planifie une commande differee |
+
+### Commandes de diffusion reseau
+
+| Commande | Format | Description |
+|----------|--------|-------------|
+| `diff` | `diff:<chemin>` | Diffuse un fichier a tout le reseau (broadcast Reed-Solomon) |
+| `bupd` | `bupd` | Declenche une mise a jour firmware sur tout le reseau |
+| `fwver` | `fwver` | Diffuse la version firmware courante a tout le reseau |
+
+### Commandes du tunnel reseau E/S (netio)
+
+| Commande | Format | Description |
+|----------|--------|-------------|
+| `netio` | `netio:<adresse>` | Ouvre un tunnel E/S vers une station distante |
 
 ---
 
@@ -347,13 +401,14 @@ Le systeme utilise un code Reed-Solomon sur le corps de Galois GF(256) pour prot
 
 ### Parametres
 
-- **GROUP_K = 8** : nombre de paquets de donnees par groupe
-- **PARITY_M = 8** : nombre de paquets de parite par groupe
-- **PACKET_SIZE = 150** : taille de chaque paquet en octets
+- **GROUP_K = 32** : nombre de paquets de donnees par groupe
+- **PARITY_M = 6** : nombre de paquets de parite par groupe
+- **PACKET_SIZE = 180** : taille de chaque paquet en octets
+- **CHUNK_SIZE = 90** : taille des sous-blocs transmis (2 chunks par paquet)
 
 ### Capacite de correction
 
-Chaque groupe de 8 paquets peut tolerer la perte de **jusqu'a 8 paquets** (donnees ou parite) tant qu'au moins 8 paquets quelconques du groupe sont recus correctement.
+Chaque groupe de 32 paquets peut tolerer la perte de **jusqu'a 6 paquets** tant qu'au moins 32 paquets de donnees du groupe sont recus correctement.
 
 ### Implementation
 
@@ -446,11 +501,13 @@ L'ESP32-C3 execute `setup()` integralement. Si `rtc.getLocalEpoch() > 10` (l'hor
 
 ---
 
-## Capteur BME680
+## Capteurs
 
-### Configuration
+Mycromesh supporte plusieurs capteurs configures independamment via `/sensor.cfg`. Chaque capteur est active ou desactive individuellement.
 
-Le capteur Bosch BME680 est configure avec les parametres suivants :
+### BME680
+
+Capteur Bosch 4-en-1 (temperature, humidite, pression, resistance gaz) sur bus I2C.
 
 | Parametre | Valeur |
 |-----------|--------|
@@ -459,6 +516,25 @@ Le capteur Bosch BME680 est configure avec les parametres suivants :
 | Oversampling pression | x4 |
 | Filtre IIR | taille 3 |
 | Chauffage gaz | 320 C pendant 150 ms |
+
+### AHT20
+
+Capteur temperature/humidite sur bus I2C. Actif si `sensor_aht20 == true`.
+
+### BMP280
+
+Capteur pression/temperature sur bus I2C.
+
+| Parametre | Valeur |
+|-----------|--------|
+| Oversampling temperature | x2 |
+| Oversampling pression | x16 |
+| Filtre IIR | x16 |
+| Standby | 500 ms |
+
+### DS18B20
+
+Capteur temperature numerique sur bus OneWire (Pin 3). Peut etre chaine avec plusieurs sondes.
 
 ### Mesure et stockage
 
@@ -548,11 +624,87 @@ Le fichier firmware peut etre transfere vers un noeud distant via le protocole d
 
 ---
 
+## Diffusion reseau (broadcast)
+
+La commande `diff:<chemin>` permet de diffuser un fichier a l'ensemble du reseau sans connexion point-a-point. Le fichier est prepare avec correction d'erreurs Reed-Solomon et transmis ligne par ligne en broadcast.
+
+### Protocole de diffusion
+
+1. L'emetteur parse le fichier (`parseFile`) et cree `/tx.txt`
+2. Un paquet `brdl` (broadcast launch) est envoye pour signaler le debut de la diffusion
+3. Les lignes sont emises sequentiellement via `brdf:<seq>:<data>` en broadcast
+4. Chaque noeud recepteur retransmet les lignes avec un delai proportionnel a son adresse (20 ms * adresse) pour eviter les collisions
+5. Un paquet `brde` (broadcast end) signale la fin ; chaque noeud assemble le fichier avec `compileFile`
+
+### Diffusion de mise a jour firmware
+
+La commande `bupd` declenche une mise a jour firmware coordonnee sur tout le reseau :
+1. Un paquet `bupd` est diffuse en broadcast
+2. Chaque noeud recevant ce paquet programme une mise a jour dans 60 secondes
+3. L'emetteur se met lui-meme a jour dans 30 secondes
+
+Apres une mise a jour reussie, le noeud diffuse automatiquement sa nouvelle version via `fwver`.
+
+---
+
+## Tunnel reseau E/S (netio)
+
+Le mode netio permet d'envoyer des commandes a un noeud distant comme si l'on etait connecte directement a son port serie. Le noeud local devient **maitre**, le noeud distant devient **esclave**.
+
+### Ouverture du tunnel
+
+```
+netio:<adresse>
+```
+
+### Fonctionnement
+
+1. Le maitre envoie `ntiopen` via `trsp` a l'esclave
+2. L'esclave confirme avec `ntiok`
+3. Toutes les commandes saisies par le maitre sont envoyees via `ntidata`
+4. Les sorties de l'esclave sont transmises au maitre via `ntirsp`
+5. Taper `exit` ou atteindre le timeout (`NETIO_TIMEOUT`) ferme le tunnel
+
+### Niveaux de log en mode esclave
+
+En mode esclave, le niveau de log est contraint entre `normal` et `verbose` pour garantir un retour utile sans saturer le tunnel.
+
+---
+
+## Mode Bluetooth (BLE)
+
+Mycromesh expose un service Nordic UART (NUS) via Bluetooth Low Energy. Cela permet de controler le noeud depuis un smartphone ou un ordinateur sans connexion filaire.
+
+### Activation
+
+```
+iomd:bt
+```
+
+Le noeud est annonce comme `Mycromesh-<adresse>`. Pour revenir en USB :
+
+```
+iomd:usb
+```
+
+### Gestion de la frequence CPU
+
+Le mode BLE impose une frequence CPU minimale de 80 MHz (contrainte du stack BLE ESP32-C3). En mode USB inactif, la frequence descend a 20 MHz pour economiser l'energie. En mode actif (transmission LoRa, calcul), la frequence monte a 160 MHz.
+
+| Mode | Frequence |
+|------|-----------|
+| Inactif (USB) | 20 MHz |
+| BLE actif | 80 MHz |
+| Turbo (TX/calcul) | 160 MHz |
+
+---
+
 ## Fichiers carte SD
 
 | Fichier | Format | Description |
 |---------|--------|-------------|
-| `/p.cfg` | `MAX_PING_AGE:starttimeout:localAddress:DELAY:MAX_ENTRY_AGE:actiontimerdel:maintmode:stationgateway:TOGATE_COMMAND_TIMEOUT:` | Parametres de la station |
+| `/p.cfg` | `MAX_PING_AGE:starttimeout:localAddress:DELAY:MAX_ENTRY_AGE:actiontimerdel:maintmode:stationgateway:TOGATE_COMMAND_TIMEOUT:...:ioMode:NETIO_TIMEOUT:` | Parametres de la station |
+| `/sensor.cfg` | `bme680:<0\|1>:aht20:<0\|1>:bmp280:<0\|1>:ds18b20:<0\|1>` | Configuration des capteurs actifs |
 | `/map.cfg` | `tmap:<v1,v2,w>:<v1,v2,w>:...` | Topologie reseau sauvegardee |
 | `/e.cfg` | `startstat:msgCount:` | Etat d'environnement (pour reprise apres deep sleep) |
 | `/crontab.cfg` | Taches cron separees par `;` | Planification des taches |
@@ -580,6 +732,7 @@ Les parametres peuvent etre modifies en cours d'execution avec la commande `parm
 | `DELAY` | long (ms) | Duree de retention des IDs de deduplication |
 | `actiontimerdel` | int (s) | Delai d'inactivite avant entree en deep sleep |
 | `TOGATE_COMMAND_TIMEOUT` | long (ms) | Timeout des commandes passerelle |
+| `NETIO_TIMEOUT` | long (ms) | Timeout d'inactivite du tunnel reseau E/S |
 
 ---
 
@@ -595,9 +748,10 @@ Les parametres peuvent etre modifies en cours d'execution avec la commande `parm
 | File passerelle (memoire) | 10 | `MAX_TOGATE_COMMANDS` |
 | File passerelle (fichier) | 20 | `MAX_TOGATE_COMMANDS_FILE` |
 | Tampon IDs deduplication | 10 | `MAX_SIZE` |
-| Taille paquet RS | 150 octets | `PACKET_SIZE` |
-| Paquets donnees par groupe RS | 8 | `GROUP_K` |
-| Paquets parite par groupe RS | 8 | `PARITY_M` |
+| Taille paquet RS | 180 octets | `PACKET_SIZE` |
+| Taille sous-bloc RS | 90 octets | `CHUNK_SIZE` |
+| Paquets donnees par groupe RS | 32 | `GROUP_K` |
+| Paquets parite par groupe RS | 6 | `PARITY_M` |
 | Buffer lecture fichier | 256 octets | `TAILLE_TAMPON` |
 | Taille max payload LoRa | ~225 octets | (limite protocole) |
 | Timeout reception fichier | 300 s | `filetimeout` |
