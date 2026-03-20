@@ -166,6 +166,24 @@ bool broadcastFileSending = false;  // Émettrice : envoi de lignes en cours
 unsigned long lastBrdfSendMs = 0;  // Dernier envoi brdf (millis)
 int brdfSeqCounter = 0;            // Compteur de séquence brdf
 
+// ============================================================
+// Bouton (pin 2, normalement bas) et LED (pin 10)
+// ============================================================
+#define PIN_BUTTON      2
+#define PIN_LED         10
+#define BTN_DEBOUNCE_MS 50     // ms — anti-rebond
+
+// LED : machine d'état non-bloquante
+static unsigned long ledCycleMs = 0;  // début du cycle courant
+static bool          ledOn      = false;
+
+// Bouton : anti-rebond
+static bool          btnPrev   = false;
+static unsigned long btnEdgeMs = 0;
+
+// Mode de navigation courant (0=normal, 1=maintenance, 2=IO_USB, 3=IO_BLE, 4=IO_NETIO)
+int navMode = 0;
+
 // Tableaux
 
 struct DelayedCommand {
@@ -2595,8 +2613,81 @@ void cpuIdle() {
   }
 }
 
+// ============================================================
+// Bouton & LED — fonctions non-bloquantes
+// ============================================================
+
+// Retourne le nombre de clignotements LED pour l'état courant :
+//   0 = éteinte (veille), 1 = mode normal, 2 = mode maintenance
+int ledTargetBlinks() {
+  if (stationstat == 1) return 0;
+  return maintmode ? 2 : 1;
+}
+
+// Met à jour la LED selon l'état courant, sans aucun délai bloquant.
+// Doit être appelée à chaque itération de loop().
+void updateLED() {
+  const unsigned long ON_MS    = 120;   // durée allumée par clignotement
+  const unsigned long OFF_MS   = 150;   // pause entre clignotements
+  const unsigned long CYCLE_MS = 2500;  // période du cycle complet
+  int target = ledTargetBlinks();
+  if (target == 0) {
+    if (ledOn) { digitalWrite(PIN_LED, LOW); ledOn = false; }
+    return;
+  }
+  unsigned long now     = millis();
+  unsigned long elapsed = now - ledCycleMs;
+  if (elapsed >= CYCLE_MS) { ledCycleMs = now; elapsed = 0; }
+  unsigned long step   = ON_MS + OFF_MS;
+  unsigned long active = step * (unsigned long)target;
+  bool want = (elapsed < active) && ((elapsed % step) < ON_MS);
+  if (want != ledOn) { ledOn = want; digitalWrite(PIN_LED, ledOn ? HIGH : LOW); }
+}
+
+// Applique navMode → maintmode + ioMode et redémarre le cycle LED.
+void applyNavMode() {
+  switch (navMode) {
+    case 0: maintmode = false;                                    break;
+    case 1: maintmode = true;                                     break;
+    case 2: ioMode = IO_USB;                                      break;
+    case 3: ioMode = IO_BLUETOOTH; startBLE();                    break;
+    case 4: ioMode = IO_NETIO;                                    break;
+  }
+  ledCycleMs = millis();
+  logN("[BOUTON] navMode=" + String(navMode) + " maint=" + String(maintmode) + " io=" + String(ioMode));
+}
+
+// Initialise navMode d'après l'état chargé (maintmode + ioMode).
+void syncNavMode() {
+  if      (maintmode)                  navMode = 1;
+  else if (ioMode == IO_BLUETOOTH)     navMode = 3;
+  else if (ioMode == IO_NETIO)         navMode = 4;
+  else                                 navMode = 0;
+  ledCycleMs = millis();
+}
+
+// Détecte un front montant sur le bouton (anti-rebond) et fait avancer
+// la navigation. Doit être appelée à chaque itération de loop().
+void handleButton() {
+  bool cur = digitalRead(PIN_BUTTON);
+  unsigned long now = millis();
+  if (cur && !btnPrev && (now - btnEdgeMs >= BTN_DEBOUNCE_MS)) {
+    btnEdgeMs  = now;
+    btnPrev    = true;
+    actiontimer = now / 1000;   // réinitialise le délai d'inactivité
+    navMode    = (navMode + 1) % 5;
+    applyNavMode();
+  }
+  if (!cur) btnPrev = false;
+}
+
+// ============================================================
+
 void setup() {
   Serial.begin(9600);
+
+  pinMode(PIN_LED,    OUTPUT); digitalWrite(PIN_LED, LOW);
+  pinMode(PIN_BUTTON, INPUT);  // normalement bas — pas de pull-up interne
 
   prefs.begin("mycromesh", false);
   
@@ -2622,6 +2713,8 @@ void setup() {
       startstat = 1;      
     }
   }
+
+  syncNavMode();  // initialise navMode d'après l'état chargé
 
   if (localAddress == 0){
     MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée
@@ -2650,6 +2743,8 @@ void setup() {
 }
 
 void loop() {
+  handleButton();
+  updateLED();
   handleSerialInput();
   if (lora.available()) { onReceive(); }
       
@@ -2732,8 +2827,9 @@ void loop() {
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
-      esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
-      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
+      esp_deep_sleep_enable_gpio_wakeup((1 << 1) | (1 << PIN_BUTTON), ESP_GPIO_WAKEUP_GPIO_HIGH);
+      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);
+      gpio_set_direction((gpio_num_t)PIN_BUTTON, GPIO_MODE_INPUT);  // bouton réveil
       esp_deep_sleep_start();
     }
   }
