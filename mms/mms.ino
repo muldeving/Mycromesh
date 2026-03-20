@@ -174,15 +174,21 @@ int brdfSeqCounter = 0;            // Compteur de séquence brdf
 #define BTN_DEBOUNCE_MS 50     // ms — anti-rebond
 
 // LED : machine d'état non-bloquante
-static unsigned long ledCycleMs = 0;  // début du cycle courant
+static unsigned long ledCycleMs = 0;  // début du cycle courant (mode idle)
 static bool          ledOn      = false;
 
 // Bouton : anti-rebond
 static bool          btnPrev   = false;
 static unsigned long btnEdgeMs = 0;
 
-// Mode de navigation courant (0=normal, 1=maintenance, 2=IO_USB, 3=IO_BLE, 4=IO_NETIO)
-int navMode = 0;
+// Navigation par menu bouton
+#define NAV_INTERPRESS_MS 400   // fenêtre inter-appuis pour 1 vs 2 appuis (ms)
+#define NAV_TIMEOUT_MS    5000  // inactivité → sortie du mode saisie (ms)
+// 0=idle, 1=sélection sous-menu, 2=sous-menu maintenance, 3=sous-menu E/S
+int           navState    = 0;
+unsigned long navEntryMs  = 0;   // horodatage entrée dans l'état courant
+unsigned long lastPressMs = 0;   // horodatage du dernier appui
+int           pressCount  = 0;   // appuis comptés dans l'état courant
 
 // Tableaux
 
@@ -2614,71 +2620,126 @@ void cpuIdle() {
 }
 
 // ============================================================
-// Bouton & LED — fonctions non-bloquantes
+// Bouton & LED — machine d'état de navigation (sans délai bloquant)
 // ============================================================
 
-// Retourne le nombre de clignotements LED pour l'état courant :
-//   0 = éteinte (veille), 1 = mode normal, 2 = mode maintenance
-int ledTargetBlinks() {
-  if (stationstat == 1) return 0;
-  return maintmode ? 2 : 1;
+// Retourne true sur front montant du bouton (anti-rebond).
+static bool detectPress() {
+  bool cur = digitalRead(PIN_BUTTON);
+  unsigned long now = millis();
+  bool pressed = false;
+  if (cur && !btnPrev && (now - btnEdgeMs >= BTN_DEBOUNCE_MS)) {
+    btnEdgeMs = now;
+    pressed   = true;
+  }
+  btnPrev = cur;
+  return pressed;
 }
 
-// Met à jour la LED selon l'état courant, sans aucun délai bloquant.
-// Doit être appelée à chaque itération de loop().
+// Met à jour la LED selon navState courant, sans délai bloquant.
+//   navState 0 (idle)   : 1 clignotement=normal, 2=maintenance, toutes les 2.5 s
+//   navState 1 (select) : clignotement rapide 100 ms / 100 ms
+//   navState 2 (maint)  : allumée en continu
+//   navState 3 (E/S)    : défaut allumé, courte extinction (900 ms / 200 ms)
 void updateLED() {
-  const unsigned long ON_MS    = 120;   // durée allumée par clignotement
-  const unsigned long OFF_MS   = 150;   // pause entre clignotements
-  const unsigned long CYCLE_MS = 2500;  // période du cycle complet
-  int target = ledTargetBlinks();
-  if (target == 0) {
-    if (ledOn) { digitalWrite(PIN_LED, LOW); ledOn = false; }
-    return;
+  unsigned long now = millis();
+  bool want;
+  switch (navState) {
+    case 0: {
+      if (stationstat == 1) { want = false; break; }
+      const unsigned long ON = 120, OFF = 150, CYCLE = 2500;
+      int target = maintmode ? 2 : 1;
+      unsigned long el = now - ledCycleMs;
+      if (el >= CYCLE) { ledCycleMs = now; el = 0; }
+      want = (el < (ON + OFF) * (unsigned long)target) &&
+             ((el % (ON + OFF)) < ON);
+      break;
+    }
+    case 1:  want = ((now % 200)  < 100); break;
+    case 2:  want = true;                 break;
+    case 3:  want = ((now % 1100) < 900); break;
+    default: want = false;
   }
-  unsigned long now     = millis();
-  unsigned long elapsed = now - ledCycleMs;
-  if (elapsed >= CYCLE_MS) { ledCycleMs = now; elapsed = 0; }
-  unsigned long step   = ON_MS + OFF_MS;
-  unsigned long active = step * (unsigned long)target;
-  bool want = (elapsed < active) && ((elapsed % step) < ON_MS);
   if (want != ledOn) { ledOn = want; digitalWrite(PIN_LED, ledOn ? HIGH : LOW); }
 }
 
-// Applique navMode → maintmode + ioMode et redémarre le cycle LED.
-void applyNavMode() {
-  switch (navMode) {
-    case 0: maintmode = false;                                    break;
-    case 1: maintmode = true;                                     break;
-    case 2: ioMode = IO_USB;                                      break;
-    case 3: ioMode = IO_BLUETOOTH; startBLE();                    break;
-    case 4: ioMode = IO_NETIO;                                    break;
-  }
-  ledCycleMs = millis();
-  logN("[BOUTON] navMode=" + String(navMode) + " maint=" + String(maintmode) + " io=" + String(ioMode));
-}
+// Initialise ledCycleMs au démarrage (navState=0 par défaut).
+void syncNavMode() { ledCycleMs = millis(); }
 
-// Initialise navMode d'après l'état chargé (maintmode + ioMode).
-void syncNavMode() {
-  if      (maintmode)                  navMode = 1;
-  else if (ioMode == IO_BLUETOOTH)     navMode = 3;
-  else if (ioMode == IO_NETIO)         navMode = 4;
-  else                                 navMode = 0;
-  ledCycleMs = millis();
-}
-
-// Détecte un front montant sur le bouton (anti-rebond) et fait avancer
-// la navigation. Doit être appelée à chaque itération de loop().
+// Machine d'état bouton — à appeler à chaque itération de loop().
+//
+//  navState 0 : repos — 1 appui → saisie (navState 1)
+//  navState 1 : sélection sous-menu
+//               • 1 appui puis silence 400 ms → sous-menu maintenance (navState 2)
+//               • 2 appuis                    → sous-menu E/S (navState 3)
+//               • timeout 5 s sans appui      → retour navState 0
+//  navState 2 : sous-menu maintenance (LED plein)
+//               • 1 appui dans les 5 s        → mode normal
+//               • 2 appuis dans les 5 s       → mode maintenance
+//               • timeout 5 s                 → retour navState 0 sans changement
+//  navState 3 : sous-menu E/S (LED lente)
+//               • 1 appui → pas de sortie (serialLevel=LOG_NONE)
+//               • 2 appuis → USB
+//               • 3 appuis → BLE
+//               • timeout 5 s                 → retour navState 0 sans changement
 void handleButton() {
-  bool cur = digitalRead(PIN_BUTTON);
+  bool pressed  = detectPress();
   unsigned long now = millis();
-  if (cur && !btnPrev && (now - btnEdgeMs >= BTN_DEBOUNCE_MS)) {
-    btnEdgeMs  = now;
-    btnPrev    = true;
-    actiontimer = now / 1000;   // réinitialise le délai d'inactivité
-    navMode    = (navMode + 1) % 5;
-    applyNavMode();
+  switch (navState) {
+
+    case 0:
+      if (pressed) {
+        navState = 1; navEntryMs = now; lastPressMs = now; pressCount = 0;
+        ledCycleMs = now;
+        actiontimer = now / 1000;
+        logN("[NAV] Mode sélection (1 appui=maintenance, 2=E/S)");
+      }
+      break;
+
+    case 1:
+      if (pressed) {
+        pressCount++; lastPressMs = now;
+        if (pressCount >= 2) {
+          navState = 3; navEntryMs = now; lastPressMs = now; pressCount = 0;
+          logN("[NAV] Sous-menu E/S — 1=aucune sortie  2=USB  3=BLE");
+        }
+      }
+      if (pressCount == 1 && (now - lastPressMs >= NAV_INTERPRESS_MS)) {
+        navState = 2; navEntryMs = now; lastPressMs = now; pressCount = 0;
+        logN("[NAV] Sous-menu maintenance — 1=normal  2=maintenance");
+      }
+      if (pressCount == 0 && (now - navEntryMs >= NAV_TIMEOUT_MS)) {
+        navState = 0; ledCycleMs = now;
+        logN("[NAV] Timeout — annulé");
+      }
+      break;
+
+    case 2:
+      if (pressed) { pressCount++; lastPressMs = now; }
+      if (now - navEntryMs >= NAV_TIMEOUT_MS) {
+        if      (pressCount == 1) { maintmode = false; logN("[NAV] Mode normal");       }
+        else if (pressCount >= 2) { maintmode = true;  logN("[NAV] Mode maintenance");  }
+        navState = 0; ledCycleMs = now;
+      }
+      break;
+
+    case 3:
+      if (pressed) { pressCount++; lastPressMs = now; }
+      if (now - navEntryMs >= NAV_TIMEOUT_MS) {
+        if (pressCount == 1) {
+          serialLevel = LOG_NONE;
+          logN("[NAV] Pas de sortie");
+        } else if (pressCount == 2) {
+          ioMode = IO_USB; serialLevel = LOG_NORMAL;
+          logN("[NAV] Sortie USB");
+        } else if (pressCount >= 3) {
+          ioMode = IO_BLUETOOTH; serialLevel = LOG_NORMAL; startBLE();
+          logN("[NAV] Sortie BLE");
+        }
+        navState = 0; ledCycleMs = now;
+      }
+      break;
   }
-  if (!cur) btnPrev = false;
 }
 
 // ============================================================
@@ -2714,7 +2775,7 @@ void setup() {
     }
   }
 
-  syncNavMode();  // initialise navMode d'après l'état chargé
+  syncNavMode();  // initialise ledCycleMs pour la machine d'état LED
 
   if (localAddress == 0){
     MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée
