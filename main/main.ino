@@ -24,7 +24,7 @@ ESP32Time rtc;
 
 LiteLora lora;
 
-const String FIRMWARE_VERSION = "1.3.0";
+const String FIRMWARE_VERSION = "1.4.0";
 
 #define uS_TO_S_FACTOR 1000000
 
