@@ -53,7 +53,27 @@ static uint8_t gf_log_tbl[256];
 
 Adafruit_BME680 bme;
 
-const int oneWireBus = 3; 
+// =============================================================================
+// Pinout — redéfinissable par chaque variant AVANT cet #include
+// Exemple dans gate.ino :  #define PIN_ONEWIRE 5  (avant #include "src/mycromesh.h")
+// =============================================================================
+#ifndef PIN_LORA_CS
+  #define PIN_LORA_CS   21   // SPI Chip Select LoRa
+#endif
+#ifndef PIN_LORA_IRQ
+  #define PIN_LORA_IRQ   8   // Interruption DIO0 LoRa
+#endif
+#ifndef PIN_ONEWIRE
+  #define PIN_ONEWIRE    3   // Bus OneWire (DS18B20)
+#endif
+#ifndef PIN_SD_CS
+  #define PIN_SD_CS      7   // SPI Chip Select carte SD
+#endif
+#ifndef PIN_WAKEUP
+  #define PIN_WAKEUP     1   // GPIO réveil deep sleep (niveau HAUT)
+#endif
+
+const int oneWireBus = PIN_ONEWIRE;
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 // Variable Cron
@@ -112,8 +132,8 @@ const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
 const int MAX_TOGATE_COMMANDS_FILE = 20;
 
-const int csPin = 21;          // LoRa radio chip select
-const int irqPin = 8;          // change for your board; must be a hardware interrupt pin
+const int csPin  = PIN_LORA_CS;   // LoRa radio chip select
+const int irqPin = PIN_LORA_IRQ;  // Interruption hardware LoRa DIO0
 
 // variables systeme
 
@@ -426,7 +446,7 @@ void loraToSD() {
     lora.releaseBus();
     digitalWrite(20, 0);
     delay(100);
-    if (!SD.begin(7)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
+    if (!SD.begin(PIN_SD_CS)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
 }
 
 void sdToLora() {
@@ -2603,7 +2623,14 @@ void cpuIdle() {
   }
 }
 
-void setup() {
+// =============================================================================
+// setup_base() / loop_base() — fonctions core communes à tous les variants.
+// Les variants MMS et GATE définissent leur propre setup() / loop() dans leur
+// .ino et appellent setup_base() / loop_base() pour le comportement commun.
+// Le variant CORE utilise directement setup_base() / loop_base() via le
+// wrapper ci-dessous.
+// =============================================================================
+void setup_base() {
   Serial.begin(9600);
 
   prefs.begin("mycromesh", false);
@@ -2657,7 +2684,7 @@ void setup() {
   lora.receive();
 }
 
-void loop() {
+void loop_base() {
   handleSerialInput();
   if (lora.available()) { onReceive(); }
       
@@ -2740,8 +2767,8 @@ void loop() {
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
-      esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
-      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
+      esp_deep_sleep_enable_gpio_wakeup(1ULL << PIN_WAKEUP, ESP_GPIO_WAKEUP_GPIO_HIGH);
+      gpio_set_direction((gpio_num_t)PIN_WAKEUP, GPIO_MODE_INPUT);
       esp_deep_sleep_start();
     }
   }
@@ -4043,3 +4070,12 @@ void interpreter(String msg){
       }
     }
 }
+
+// =============================================================================
+// Variant CORE : wrapper setup() / loop() direct vers les fonctions base.
+// MMS et GATE définissent leurs propres setup() / loop() dans leur .ino.
+// =============================================================================
+#if !defined(VARIANT_MMS) && !defined(VARIANT_GATE)
+void setup() { setup_base(); }
+void loop()  { loop_base();  }
+#endif
