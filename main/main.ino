@@ -2639,11 +2639,11 @@ void setup() {
   actiontimer = (millis()/1000);
 
   // Si ce démarrage fait suite à une mise à jour OTA, planifie la diffusion de la version
-  // firmware à l'ensemble du réseau 5 minutes après le boot
+  // firmware à l'ensemble du réseau 30 secondes après le boot
   if (prefs.getBool("justrestarted", false)) {
     prefs.putBool("justrestarted", false);
-    scheduleCommand(300000 + (20 * localAddress), "fwver");  // 5 min + délai proportionnel au rang
-    logN("[MÀJU RÉSEAU] Post-mise à jour — diffusion de version planifiée dans 5 min");
+    scheduleCommand(30000 + (80 * localAddress), "fwver");  // 5 min + délai proportionnel au rang
+    logN("[MÀJU RÉSEAU] Post-mise à jour — diffusion de version planifiée dans 30 sec");
   }
 
   lora.receive();
@@ -2932,8 +2932,8 @@ void onReceive() {
       String bupdid = getValue(incoming, ':', 1);
       if (!findValue(bupdid)) {
         addValue(bupdid);
-        logN("[MÀJU RÉSEAU] Déclenchement de mise à jour reçu — upgrade dans 60 s");
-        scheduleCommand(60000, "upgrade");
+        logN("[MÀJU RÉSEAU] Déclenchement de mise à jour reçu — upgrade dans 30 s");
+        scheduleCommand(30000, "upgrade");
         String rbupd = "trsms:0:";
         rbupd += incoming;
         scheduleCommand(20 * localAddress, rbupd);
@@ -3854,7 +3854,7 @@ void interpreter(String msg){
       addValue(tempid);
       sendMessage(0, bupd, 0);  // Diffusion sans réveil
       logN("[MÀJU RÉSEAU] Diffusion de mise à jour envoyée — chaque station upgradée dans 60 s");
-      scheduleCommand(60000, "upgrade");  // La station émettrice upgradera également
+      scheduleCommand(30000, "upgrade");  // La station émettrice upgradera également
     }
 
     // ================================================================
