@@ -112,13 +112,4 @@
         font-family="Arial,Helvetica,sans-serif"
         fill="#000" text-anchor="middle">BLE</text>
 
-  <!-- ══════════════════════════════════════════
-       TIMEOUT 5 s – ligne pointillée + label
-       ══════════════════════════════════════════ -->
-  <line x1="8" y1="158" x2="242" y2="158"
-        stroke="#000" stroke-width="1" stroke-dasharray="5,3"
-        fill="none" stroke-linecap="round"/>
-  <text x="125" y="172" font-size="8" font-family="Arial,Helvetica,sans-serif"
-        fill="#000" text-anchor="middle">5s &#x2192; annulé</text>
-
 </svg>
