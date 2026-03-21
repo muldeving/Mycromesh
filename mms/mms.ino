@@ -2729,6 +2729,7 @@ void handleButton() {
         if (pressCount == 1) {
           serialLevel = LOG_NONE;
           logN("[NAV] Pas de sortie");
+          stopBLE();
         } else if (pressCount == 2) {
           ioMode = IO_USB; serialLevel = LOG_NORMAL;
           logN("[NAV] Sortie USB");
