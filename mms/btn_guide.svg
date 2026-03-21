@@ -11,15 +11,14 @@
      width="25mm" height="20mm">
 
   <!-- ══════════════════════════════════════════
-       BOUTON – symbole interrupteur tactile
+       BOUTON – label "ACT"
        ══════════════════════════════════════════ -->
-  <circle cx="125" cy="19" r="14"
-          fill="none" stroke="#000" stroke-width="2"
-          stroke-linecap="round"/>
-  <circle cx="125" cy="19" r="5" fill="#000"/>
+  <text x="125" y="22" font-size="14" font-weight="bold"
+        font-family="Arial,Helvetica,sans-serif"
+        fill="#000" text-anchor="middle">ACT</text>
 
   <!-- flèche vers mode sélection -->
-  <line x1="125" y1="33" x2="125" y2="48"
+  <line x1="125" y1="28" x2="125" y2="48"
         stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
   <polygon points="118,45 132,45 125,52" fill="#000"/>
 
