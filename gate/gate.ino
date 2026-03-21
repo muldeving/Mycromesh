@@ -106,6 +106,7 @@ const int MAX_TOGATE_COMMANDS_FILE = 20;
 
 const int csPin = 15;          // LoRa radio chip select (io15)
 const int irqPin = 4;          // LoRa DIO0 interrupt pin (io4)
+const int busMuxPin = 17;      // LoRa/SD bus mux control (io17)
 
 // variables systeme
 
@@ -416,13 +417,13 @@ void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   ioOutput(msg); }
 
 void loraToSD() {
     lora.releaseBus();
-    digitalWrite(20, 0);
+    digitalWrite(busMuxPin, 0);
     delay(100);
     if (!SD.begin(16)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
 }
 
 void sdToLora() {
-    digitalWrite(20, 1);
+    digitalWrite(busMuxPin, 1);
     lora.acquireBus();
 }
 
@@ -2734,8 +2735,6 @@ void loop() {
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
-      esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
-      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
       esp_deep_sleep_start();
     }
   }
