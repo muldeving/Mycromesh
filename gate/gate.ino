@@ -36,9 +36,6 @@ const String FIRMWARE_VERSION = "1.4.0";
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
 
-#define CPU_FREQ_IDLE   20
-#define CPU_FREQ_BLE    80   // frequence minimale requise par le stack BLE sur ESP32-C3
-#define CPU_FREQ_TURBO  160
 
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
@@ -256,7 +253,7 @@ class BLERxCB : public NimBLECharacteristicCallbacks {
 };
 
 void startBLE() {
-  cpuTurbo();
+
   if (bleServer) return; // deja demarre
   NimBLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
   bleServer = NimBLEDevice::createServer();
@@ -849,7 +846,7 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 
 // ---------------- PARSE ----------------
 bool parseFile(String path) {
-  cpuTurbo();
+
   logD("parse:start " + path);
   delay(50);
   loraToSD();
@@ -947,7 +944,7 @@ bool parseFile(String path) {
 
 // ---------------- COMPILE ----------------
 void compileFile(String fnameced, int origin, int toremof) {
-  cpuTurbo();
+
   logD("compile:start " + fnameced);
   delay(50);
   loraToSD();
@@ -2580,23 +2577,6 @@ bool doFirmwareUpdate() {
 }
 
 // --- CPU Frequency Scaling ---
-// idle : 20 MHz en mode USB, 80 MHz minimum en mode BLE (contrainte du stack BLE ESP32-C3)
-// turbo : 160 MHz pour les traitements intensifs (encodage RS, compilation fichier...)
-
-void cpuTurbo() {
-  setCpuFrequencyMhz(CPU_FREQ_TURBO);
-  Serial.updateBaudRate(115200);
-}
-
-void cpuIdle() {
-  if (ioMode == IO_BLUETOOTH || (ioMode == IO_NETIO && ntioPrevIoMode == IO_BLUETOOTH)){
-    setCpuFrequencyMhz(CPU_FREQ_BLE);
-  }
-  else{
-    setCpuFrequencyMhz(CPU_FREQ_IDLE);
-  }
-  Serial.updateBaudRate(115200);
-}
 
 void setup() {
   Serial.begin(115200);
@@ -2766,7 +2746,7 @@ void loop() {
   togatePurgeOld();
   purgeToOldFile();
   removeExpiredValues();
-  cpuIdle();
+
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
