@@ -104,8 +104,8 @@ const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
 const int MAX_TOGATE_COMMANDS_FILE = 20;
 
-const int csPin = 21;          // LoRa radio chip select
-const int irqPin = 8;          // change for your board; must be a hardware interrupt pin
+const int csPin = 15;          // LoRa radio chip select (io15)
+const int irqPin = 4;          // LoRa DIO0 interrupt pin (io4)
 
 // variables systeme
 
@@ -418,7 +418,7 @@ void loraToSD() {
     lora.releaseBus();
     digitalWrite(20, 0);
     delay(100);
-    if (!SD.begin(7)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
+    if (!SD.begin(16)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
 }
 
 void sdToLora() {
@@ -2601,6 +2601,8 @@ void setup() {
   prefs.begin("mycromesh", false);
   
   clearEdges();
+
+  SPI.begin(14, 12, 13, 15); // SCK=io14, MISO=io12, MOSI=io13, SS=io15
 
   LiteLoraConfig cfg = LiteLora::defaultConfig();
   cfg.csPin = csPin;
