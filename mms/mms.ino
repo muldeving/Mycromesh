@@ -166,6 +166,30 @@ bool broadcastFileSending = false;  // Émettrice : envoi de lignes en cours
 unsigned long lastBrdfSendMs = 0;  // Dernier envoi brdf (millis)
 int brdfSeqCounter = 0;            // Compteur de séquence brdf
 
+// ============================================================
+// Bouton (pin 2, normalement bas) et LED (pin 10)
+// ============================================================
+#define PIN_BUTTON      2
+#define PIN_LED         10
+#define BTN_DEBOUNCE_MS 50     // ms — anti-rebond
+
+// LED : machine d'état non-bloquante
+static unsigned long ledCycleMs = 0;  // début du cycle courant (mode idle)
+static bool          ledOn      = false;
+
+// Bouton : anti-rebond
+static bool          btnPrev   = false;
+static unsigned long btnEdgeMs = 0;
+
+// Navigation par menu bouton
+#define NAV_INTERPRESS_MS 400   // fenêtre inter-appuis pour 1 vs 2 appuis (ms)
+#define NAV_TIMEOUT_MS    5000  // inactivité → sortie du mode saisie (ms)
+// 0=idle, 1=sélection sous-menu, 2=sous-menu maintenance, 3=sous-menu E/S
+int           navState    = 0;
+unsigned long navEntryMs  = 0;   // horodatage entrée dans l'état courant
+unsigned long lastPressMs = 0;   // horodatage du dernier appui
+int           pressCount  = 0;   // appuis comptés dans l'état courant
+
 // Tableaux
 
 struct DelayedCommand {
@@ -2595,8 +2619,137 @@ void cpuIdle() {
   }
 }
 
+// ============================================================
+// Bouton & LED — machine d'état de navigation (sans délai bloquant)
+// ============================================================
+
+// Retourne true sur front montant du bouton (anti-rebond).
+static bool detectPress() {
+  bool cur = digitalRead(PIN_BUTTON);
+  unsigned long now = millis();
+  bool pressed = false;
+  if (cur && !btnPrev && (now - btnEdgeMs >= BTN_DEBOUNCE_MS)) {
+    btnEdgeMs = now;
+    pressed   = true;
+  }
+  btnPrev = cur;
+  return pressed;
+}
+
+// Met à jour la LED selon navState courant, sans délai bloquant.
+//   navState 0 (idle)   : 1 clignotement=normal, 2=maintenance, toutes les 2.5 s
+//   navState 1 (select) : clignotement rapide 100 ms / 100 ms
+//   navState 2 (maint)  : allumée en continu
+//   navState 3 (E/S)    : défaut allumé, courte extinction (900 ms / 200 ms)
+void updateLED() {
+  unsigned long now = millis();
+  bool want;
+  switch (navState) {
+    case 0: {
+      if (stationstat == 1) { want = false; break; }
+      const unsigned long ON = 120, OFF = 150, CYCLE = 2500;
+      int target = maintmode ? 2 : 1;
+      unsigned long el = now - ledCycleMs;
+      if (el >= CYCLE) { ledCycleMs = now; el = 0; }
+      want = (el < (ON + OFF) * (unsigned long)target) &&
+             ((el % (ON + OFF)) < ON);
+      break;
+    }
+    case 1:  want = ((now % 200)  < 100); break;
+    case 2:  want = true;                 break;
+    case 3:  want = ((now % 1100) < 900); break;
+    default: want = false;
+  }
+  if (want != ledOn) { ledOn = want; digitalWrite(PIN_LED, ledOn ? HIGH : LOW); }
+}
+
+// Initialise ledCycleMs au démarrage (navState=0 par défaut).
+void syncNavMode() { ledCycleMs = millis(); }
+
+// Machine d'état bouton — à appeler à chaque itération de loop().
+//
+//  navState 0 : repos — 1 appui → saisie (navState 1)
+//  navState 1 : sélection sous-menu
+//               • 1 appui puis silence 400 ms → sous-menu maintenance (navState 2)
+//               • 2 appuis                    → sous-menu E/S (navState 3)
+//               • timeout 5 s sans appui      → retour navState 0
+//  navState 2 : sous-menu maintenance (LED plein)
+//               • 1 appui dans les 5 s        → mode normal
+//               • 2 appuis dans les 5 s       → mode maintenance
+//               • timeout 5 s                 → retour navState 0 sans changement
+//  navState 3 : sous-menu E/S (LED lente)
+//               • 1 appui → pas de sortie (serialLevel=LOG_NONE)
+//               • 2 appuis → USB
+//               • 3 appuis → BLE
+//               • timeout 5 s                 → retour navState 0 sans changement
+void handleButton() {
+  bool pressed  = detectPress();
+  unsigned long now = millis();
+  switch (navState) {
+
+    case 0:
+      if (pressed) {
+        navState = 1; navEntryMs = now; lastPressMs = now; pressCount = 0;
+        ledCycleMs = now;
+        actiontimer = now / 1000;
+        logN("[NAV] Mode sélection (1 appui=maintenance, 2=E/S)");
+      }
+      break;
+
+    case 1:
+      if (pressed) {
+        pressCount++; lastPressMs = now;
+        if (pressCount >= 2) {
+          navState = 3; navEntryMs = now; lastPressMs = now; pressCount = 0;
+          logN("[NAV] Sous-menu E/S — 1=aucune sortie  2=USB  3=BLE");
+        }
+      }
+      if (pressCount == 1 && (now - lastPressMs >= NAV_INTERPRESS_MS)) {
+        navState = 2; navEntryMs = now; lastPressMs = now; pressCount = 0;
+        logN("[NAV] Sous-menu maintenance — 1=normal  2=maintenance");
+      }
+      if (pressCount == 0 && (now - navEntryMs >= NAV_TIMEOUT_MS)) {
+        navState = 0; ledCycleMs = now;
+        logN("[NAV] Timeout — annulé");
+      }
+      break;
+
+    case 2:
+      if (pressed) { pressCount++; lastPressMs = now; }
+      if (now - navEntryMs >= NAV_TIMEOUT_MS) {
+        if      (pressCount == 1) { maintmode = false; logN("[NAV] Mode normal");       }
+        else if (pressCount >= 2) { maintmode = true;  logN("[NAV] Mode maintenance");  }
+        navState = 0; ledCycleMs = now;
+      }
+      break;
+
+    case 3:
+      if (pressed) { pressCount++; lastPressMs = now; }
+      if (now - navEntryMs >= NAV_TIMEOUT_MS) {
+        if (pressCount == 1) {
+          serialLevel = LOG_NONE;
+          logN("[NAV] Pas de sortie");
+          stopBLE();
+        } else if (pressCount == 2) {
+          ioMode = IO_USB; serialLevel = LOG_NORMAL;
+          logN("[NAV] Sortie USB");
+        } else if (pressCount >= 3) {
+          ioMode = IO_BLUETOOTH; serialLevel = LOG_NORMAL; startBLE();
+          logN("[NAV] Sortie BLE");
+        }
+        navState = 0; ledCycleMs = now;
+      }
+      break;
+  }
+}
+
+// ============================================================
+
 void setup() {
   Serial.begin(9600);
+
+  pinMode(PIN_LED,    OUTPUT); digitalWrite(PIN_LED, LOW);
+  pinMode(PIN_BUTTON, INPUT);  // normalement bas — pas de pull-up interne
 
   prefs.begin("mycromesh", false);
   
@@ -2622,6 +2775,8 @@ void setup() {
       startstat = 1;      
     }
   }
+
+  syncNavMode();  // initialise ledCycleMs pour la machine d'état LED
 
   if (localAddress == 0){
     MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée
@@ -2650,6 +2805,8 @@ void setup() {
 }
 
 void loop() {
+  handleButton();
+  updateLED();
   handleSerialInput();
   if (lora.available()) { onReceive(); }
       
@@ -2732,8 +2889,9 @@ void loop() {
       if(nextwup > 0){        
         esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
       }
-      esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
-      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
+      esp_deep_sleep_enable_gpio_wakeup((1 << 1) | (1 << PIN_BUTTON), ESP_GPIO_WAKEUP_GPIO_HIGH);
+      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);
+      gpio_set_direction((gpio_num_t)PIN_BUTTON, GPIO_MODE_INPUT);  // bouton réveil
       esp_deep_sleep_start();
     }
   }
