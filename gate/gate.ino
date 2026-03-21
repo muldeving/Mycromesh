@@ -45,7 +45,7 @@ static uint8_t gf_log_tbl[256];
 
 Adafruit_BME680 bme;
 
-const int oneWireBus = 3; 
+const int oneWireBus = 2;  // io2 — io3 est UART0 RX, ne pas utiliser pour OneWire
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 // Variable Cron
@@ -2585,6 +2585,7 @@ bool doFirmwareUpdate() {
 
 void cpuTurbo() {
   setCpuFrequencyMhz(CPU_FREQ_TURBO);
+  Serial.updateBaudRate(115200);
 }
 
 void cpuIdle() {
@@ -2594,6 +2595,7 @@ void cpuIdle() {
   else{
     setCpuFrequencyMhz(CPU_FREQ_IDLE);
   }
+  Serial.updateBaudRate(115200);
 }
 
 void setup() {
