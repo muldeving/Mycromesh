@@ -52,7 +52,6 @@ String crontabString;
 // Variable de parametres
 
 long MAX_PING_AGE = 20000;      // Duree maximale (en millisecondes) avant traitement d'une entree - stocke en ms, p.cfg en secondes
-long starttimeout = 15000;      // Duree timout procudure start - stocke en ms, p.cfg en secondes
 int localAddress = 61;          // address of this device
 long DELAY = 3600000;           // Delai en millisecondes - stocke en ms, p.cfg en secondes
 long MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree - stocke en ms, p.cfg en secondes
@@ -86,7 +85,7 @@ int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegarde avant activati
 
 // variables d'etat
 
-int startstat = 0;
+
 byte msgCount = 0;            // count of outgoing messages
 
 // variables d'environnement
@@ -121,16 +120,11 @@ bool sensor_aht20 = false;
 bool sensor_bmp280 = false;
 bool sensor_ds18b20 = false;
 int lastMinuteChecked = -1;
-int rtmapdel = 0, fpingdel = 0;
-unsigned long starttime;
-int starttry = 0;
-int nearestforstart;
 unsigned long timegeth = 0;
 int pingCount = 0; // Nombre actuel d'entrees dans la liste
 int dataCount = 0;        // Compteur de valeurs stockees
 unsigned long lastAddTime = 0; // Temps de la derniere addition
 int sender;
-int pingphase = 0;
 unsigned long tmps = 0;
 int numEdges = 0;
 int numVertices = 0;
@@ -1562,79 +1556,6 @@ String formatNumber(int number, int digits) {
   return String(buffer);
 }
 
-void startprocedure(){
-  if(startstat == 1){
-    interpreter("pigo");
-    startstat = 2;
-    logN("[DEMARRAGE] Lancement de la decouverte reseau (ping)...");
-  }
-  if(startstat == 2 && pingphase == 0 && ((millis()/1000) - fpingdel > 30)){
-    startstat = 3;
-  }
-  if(startstat == 3){
-   nearestforstart = findNearestVertex(localAddress);
-   logV("start:3 nearest=" + String(nearestforstart));
-   if(nearestforstart == -1){
-    startstat = 9;
-    logN("[ERREUR] Demarrage echoue : aucun voisin detecte apres le ping");
-    return;
-   }
-   else{
-    sendMessage(1, "gmap", nearestforstart);
-    starttime = millis() + starttimeout;
-    startstat = 4;
-    starttry = 1;
-    logN("[DEMARRAGE] Recuperation de la carte reseau aupres du noeud #" + String(nearestforstart) + "...");
-   logV("start:4 gmap->" + String(nearestforstart));
-   }
-  }
-  if(startstat == 4 && millis() >= starttime && starttry < 3){
-    sendMessage(1, "gmap", nearestforstart);
-    starttry ++;
-    starttime = millis() + starttimeout;
-    logV("start:4 retry gmap");
-  }
-  if(startstat == 4 && millis() >= starttime && starttry >= 3){
-    startstat = 3;
-    logV("start:3 map timeout, retry");
-    removeEdge(localAddress, nearestforstart);
-  }
-  if(startstat == 5 && ((millis()/1000) - rtmapdel > 40)){
-    startstat = 6;
-    logV("start:6 map ok");
-    }
-  if(startstat == 6){
-   delay(3000);
-   nearestforstart = findNearestVertex(localAddress);
-   logV("start:6 nearest=" + String(nearestforstart));
-   if(nearestforstart == -1){
-    startstat = 9;
-    logN("[ERREUR] Demarrage echoue : aucun voisin trouve apres reception de la carte reseau");
-    return;
-   }
-   else{
-    timegeth = millis();
-    sendMessage(1, "geth", nearestforstart);
-    starttime = millis() + starttimeout;
-    startstat = 7;
-    starttry = 1;
-   logN("[DEMARRAGE] Synchronisation de l'heure avec le noeud #" + String(nearestforstart) + "...");
-   logV("start:7 geth->" + String(nearestforstart));
-   }
-  }
-  if(startstat == 7 && millis() >= starttime && starttry < 3){
-    timegeth = millis();
-    sendMessage(1, "geth", nearestforstart);
-    starttry ++;
-    starttime = millis() + starttimeout;
-    logV("start:7 retry geth");
-  }
-  if(startstat == 7 && millis() >= starttime && starttry >= 3){
-    startstat = 6;
-    logV("start:6 time timeout, retry");
-    removeEdge(localAddress, nearestforstart);
-  }
-}
 
 String exportdata(String ver){
   if(ver == 0){
@@ -1772,46 +1693,8 @@ void measuretodump(int ver){
     sensorstart = true;
   }
   String tosdarg = "";
-  if(ver == 0){    
-    float batt = (analogReadMilliVolts(0));
-    tosdarg += "nbatt:";
-    tosdarg += String(batt/500);
-    tosdarg += ";";
-    tosdarg += "tstartstat:";
-    tosdarg += String(startstat);
-    tosdarg += ";";
-    tosdarg += "trxglob:";
-    tosdarg += rxglob;
-    tosdarg += ";";
-    tosdarg += "trxbrd:";
-    tosdarg += rxbrd;
-    tosdarg += ";";
-    tosdarg += "trxloc:";
-    tosdarg += rxloc;
-    tosdarg += ";";
-    tosdarg += "tdijktx:";
-    tosdarg += dijktx;
-    tosdarg += ";";
-    tosdarg += "tdijkrx:";
-    tosdarg += dijkrx;
-    tosdarg += ";";
-    tosdarg += "tdijkhop:";
-    tosdarg += dijkhop;
-    tosdarg += ";";
-    tosdarg += "tresend1:";
-    tosdarg += resend1;
-    tosdarg += ";";
-    tosdarg += "tresend2:";
-    tosdarg += resend2;
-    tosdarg += ";";
-    tosdarg += "ttxcnt:";
-    tosdarg += txcnt;
-    tosdarg += ";";
-    tosdarg += "ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-
-    logV("sensor:v0 " + tosdarg);
+  if(ver == 0){
+    // handled separately by gmea command
   }
   if(ver == 1){
     unsigned long endTime = bme.beginReading();
@@ -1924,8 +1807,7 @@ void readsd(bool allrecover){
           myFile.close();
         }
       
-        startstat = getValue(sdtoenv, ':', 0).toInt();
-        msgCount = getValue(sdtoenv, ':', 1).toInt();
+        msgCount = getValue(sdtoenv, ':', 0).toInt();
       }
             
       myFile = SD.open("/p.cfg", FILE_READ);
@@ -1937,17 +1819,16 @@ void readsd(bool allrecover){
         myFile.close();
       }
       MAX_PING_AGE = getValue(sdtopar, ':', 0).toInt() * 1000L;
-      starttimeout = getValue(sdtopar, ':', 1).toInt() * 1000L;
-      localAddress = getValue(sdtopar, ':', 2).toInt();
-      DELAY = getValue(sdtopar, ':', 3).toInt() * 1000L;
-      MAX_ENTRY_AGE = getValue(sdtopar, ':', 4).toInt() * 1000L;
-      stationgateway = getValue(sdtopar, ':', 5).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 6).toInt() * 1000L;
-      { int sl = getValue(sdtopar, ':', 7).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(sdtopar, ':', 8).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
-      { int ft = getValue(sdtopar, ':', 12).toInt(); if(ft > 0) filetimeout = ft; }
-      { int fxt = getValue(sdtopar, ':', 13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
+      localAddress = getValue(sdtopar, ':', 1).toInt();
+      DELAY = getValue(sdtopar, ':', 2).toInt() * 1000L;
+      MAX_ENTRY_AGE = getValue(sdtopar, ':', 3).toInt() * 1000L;
+      stationgateway = getValue(sdtopar, ':', 4).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 5).toInt() * 1000L;
+      { int sl = getValue(sdtopar, ':', 6).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(sdtopar, ':', 7).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
+      { long nt = getValue(sdtopar, ':', 10).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
+      { int ft = getValue(sdtopar, ':', 11).toInt(); if(ft > 0) filetimeout = ft; }
+      { int fxt = getValue(sdtopar, ':', 12).toInt(); if(fxt > 0) filetxtimeout = fxt; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1999,8 +1880,6 @@ void writetosd(){
     String varptosd;
     varptosd += MAX_PING_AGE / 1000;
     varptosd += ":";
-    varptosd += starttimeout / 1000;
-    varptosd += ":";
     varptosd += localAddress;
     varptosd += ":";
     varptosd += DELAY / 1000;
@@ -2043,8 +1922,6 @@ void writetosd(){
     }
 
     String varetosd;
-    varetosd += startstat;
-    varetosd += ":";
     varetosd += msgCount;
     varetosd += ":";
 
@@ -2591,12 +2468,10 @@ void setup() {
   }
   else{
     readsd(0);
-    startstat = 1;
   }
 
   if (localAddress == 0){
-    MAX_PING_AGE = 20000;      // Duree maximale (en millisecondes) avant traitement d'une entree
-    starttimeout = 15000;      // Duree timout procudure start
+    MAX_PING_AGE = 20000;
     localAddress = 61;          // address of this device
     DELAY = 3600000;           // Delai en millisecondes (ici 5 secondes)
     MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree
@@ -2621,31 +2496,6 @@ void loop() {
   handleSerialInput();
   if (lora.available()) { onReceive(); }
       
-  if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
-    sendMessage(1, "ping", 0);
-    pingphase = 2;
-    logV("ping:2");
-    tmps = (millis()/1000);
-  }
-  if(pingphase == 2 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
-    sendMessage(1, "ping", 0);
-    pingphase = 3;
-    logV("ping:3");
-    tmps = (millis()/1000);
-  }
-  if(pingphase == 3 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
-    pingphase = 0;
-    String outgoingumap = exportEdgesContainingVertex(localAddress);
-    logD("umap:" + outgoingumap);
-    addValue(getValue(outgoingumap, ':', 1));
-    sendMessage(1, outgoingumap, 0);
-    logN("[PING] Decouverte terminee - " + String(numEdges) + " lien(s) dans la table de routage");
-    fpingdel = millis() / 1000;
-  }
-
-  if(startstat < 7 && startstat > 0){
-    startprocedure();
-  }
 
   if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
@@ -3081,10 +2931,7 @@ void changepval(String parn, String parv){
     MAX_PING_AGE = parv.toInt();
     logN("[CONFIG] Parametre 'MAX_PING_AGE' mis a jour : " + String(MAX_PING_AGE) + " ms");
   }
-  if(parn == "starttimeout"){
-    starttimeout = parv.toInt();
-    logN("[CONFIG] Parametre 'starttimeout' mis a jour : " + String(starttimeout) + " ms");
-  }
+
   if(parn == "localAddress"){
     localAddress = parv.toInt();
     logN("[CONFIG] Parametre 'localAddress' mis a jour : " + String(localAddress));
@@ -3129,7 +2976,6 @@ void interpreter(String msg){
   if(cmd == "getcfg"){
     String cfg;
     cfg += MAX_PING_AGE / 1000;           cfg += ":";
-    cfg += starttimeout / 1000;           cfg += ":";
     cfg += localAddress;                  cfg += ":";
     cfg += DELAY / 1000;                  cfg += ":";
     cfg += MAX_ENTRY_AGE / 1000;          cfg += ":";
@@ -3143,25 +2989,24 @@ void interpreter(String msg){
     ioOutput("CFG:" + cfg);
   }
   // -- setcfg : recoit p.cfg depuis le configurateur, applique et sauvegarde --
-  // Format attendu : setcfg:MAX_PING_AGE:starttimeout:...:filetxtimeout:
+  // Format attendu : setcfg:MAX_PING_AGE:localAddress:...:filetxtimeout:
   if(cmd == "setcfg"){
     int fieldCount = 0;
     for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
-    if(fieldCount < 14){
-      ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/14 champs)");
+    if(fieldCount < 13){
+      ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/13 champs)");
     } else {
       MAX_PING_AGE           = getValue(msg,':',1).toInt() * 1000L;
-      starttimeout           = getValue(msg,':',2).toInt() * 1000L;
-      localAddress           = getValue(msg,':',3).toInt();
-      DELAY                  = getValue(msg,':',4).toInt() * 1000L;
-      MAX_ENTRY_AGE          = getValue(msg,':',5).toInt() * 1000L;
-      stationgateway         = getValue(msg,':',6).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',7).toInt() * 1000L;
-      { int sl = getValue(msg,':',8).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(msg,':',11).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
-      { int ft  = getValue(msg,':',13).toInt(); if(ft  > 0) filetimeout  = ft; }
-      { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
+      localAddress           = getValue(msg,':',2).toInt();
+      DELAY                  = getValue(msg,':',3).toInt() * 1000L;
+      MAX_ENTRY_AGE          = getValue(msg,':',4).toInt() * 1000L;
+      stationgateway         = getValue(msg,':',5).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',6).toInt() * 1000L;
+      { int sl = getValue(msg,':',7).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(msg,':',10).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
+      { long nt = getValue(msg,':',11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
+      { int ft  = getValue(msg,':',12).toInt(); if(ft  > 0) filetimeout  = ft; }
+      { int fxt = getValue(msg,':',13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
       writetosd();
       ioOutput("CFG:OK");
     }
@@ -3241,7 +3086,6 @@ void interpreter(String msg){
   if(cmd == "pigo"){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
-      pingphase = 1;
       logN("[PING] Envoi des sondes de decouverte reseau...");
       tmps = (millis()/1000);
     }  
@@ -3390,10 +3234,6 @@ void interpreter(String msg){
       }
     }
     if (cmd == "tmap") {
-      if(startstat == 4){        
-        startstat = 5;
-        rtmapdel = millis()/1000;
-      }
       int pcount = 1;
       while (getValue(msg, ':', pcount) != "") {
         addOrUpdateEdge(
@@ -3413,10 +3253,6 @@ void interpreter(String msg){
       delay(1000 - delaygeth);
       rtc.setTime(((getValue(msg, ':', 1)).toInt()) + 1);
       logV("seth:set=" + getValue(msg, ':', 1));
-      if(startstat == 7){
-        startstat = 8;
-        logN("[OK] Noeud #" + String(localAddress) + " operationnel et connecte au reseau");
-      }
     }
     if(cmd == "geth"){
       delay(50);
@@ -3431,15 +3267,7 @@ void interpreter(String msg){
     if(cmd == "prgh"){
       rtc.setTime((getValue(msg, ':', 1)).toInt());
     }
-    if(cmd == "star"){
-      startstat = 1;
-    }
 
-    if(cmd == "stam"){
-      rtc.setTime((getValue(msg, ':', 1)).toInt());
-      startstat = 8;
-      logN("[OK] Noeud #" + String(localAddress) + " synchronise et operationnel");
-    }
     if(cmd == "fdih"){
       delay(10);
       timegeth = millis();
@@ -3491,7 +3319,19 @@ void interpreter(String msg){
       interpreter(load);
     }
     if(cmd == "gmea"){
-      measuretodump(getValue(msg, ':', 1).toInt());
+      float batt = analogReadMilliVolts(0);
+      String s = "nbatt:" + String(batt/500) + ";";
+      s += "trxglob:" + String(rxglob) + ";";
+      s += "trxbrd:"  + String(rxbrd)  + ";";
+      s += "trxloc:"  + String(rxloc)  + ";";
+      s += "tdijktx:" + String(dijktx) + ";";
+      s += "tdijkrx:" + String(dijkrx) + ";";
+      s += "tdijkhop:"+ String(dijkhop)+ ";";
+      s += "tresend1:"+ String(resend1)+ ";";
+      s += "tresend2:"+ String(resend2)+ ";";
+      s += "ttxcnt:"  + String(txcnt)  + ";";
+      s += "ntime:"   + String(rtc.getLocalEpoch()) + ";";
+      ioOutput(s);
     }
     if(cmd == "parm"){
       changepval(getValue(msg, ':', 1), getValue(msg, ':', 2));
