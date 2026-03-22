@@ -2790,8 +2790,18 @@ void interpreter(String msg){
   if(cmd == "pigo"){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
-      logN("[PING] Envoi des sondes de decouverte reseau...");
+      logN("[PING] Envoi des sondes de decouverte reseau (vague 1/3)...");
+      scheduleCommand(2000, "pping:2");
+      scheduleCommand(4000, "pping:3");
+      scheduleCommand(7000, "pend");
       tmps = (millis()/1000);
+    }
+    if(cmd == "pping"){
+      logN("[PING] Envoi des sondes de decouverte reseau (vague " + getValue(msg, ':', 1) + "/3)...");
+      sendMessage(1, "ping", 0);
+    }
+    if(cmd == "pend"){
+      logN("[PING] Decouverte reseau terminee.");
     }  
     if(cmd == "dijk"){
       if(getValue(msg, ':', 2).toInt() != localAddress){
