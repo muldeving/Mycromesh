@@ -3005,8 +3005,7 @@ void interpreter(String msg){
     logD("gdfh:" + tosenddifh);
     }
     if(cmd == "gmea"){
-      float batt = analogReadMilliVolts(0);
-      String s = "nbatt:" + String(batt/500) + ";";
+      String s;
       s += "trxglob:" + String(rxglob) + ";";
       s += "trxbrd:"  + String(rxbrd)  + ";";
       s += "trxloc:"  + String(rxloc)  + ";";
@@ -3016,8 +3015,10 @@ void interpreter(String msg){
       s += "tresend1:"+ String(resend1)+ ";";
       s += "tresend2:"+ String(resend2)+ ";";
       s += "ttxcnt:"  + String(txcnt)  + ";";
-      s += "ntime:"   + String(rtc.getLocalEpoch()) + ";";
       ioOutput(s);
+      rxglob = 0; rxbrd = 0; rxloc = 0;
+      dijktx = 0; dijkrx = 0; dijkhop = 0;
+      resend1 = 0; resend2 = 0; txcnt = 0;
     }
     if(cmd == "parm"){
       changepval(getValue(msg, ':', 1), getValue(msg, ':', 2));
