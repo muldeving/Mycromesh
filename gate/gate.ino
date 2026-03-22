@@ -5,18 +5,10 @@
 #include "driver/gpio.h"
 #include <SD.h>
 #include <time.h>
-#include "Adafruit_BME680.h"
 #include <Preferences.h>
 #include <Update.h>
 #include <Wire.h>
-#include <Adafruit_BMP280.h>
-#include <Adafruit_AHT10.h>
 #include <NimBLEDevice.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
-
-Adafruit_BMP280 bmp;
-Adafruit_AHT10 aht;
 
 Preferences prefs;
 
@@ -40,11 +32,6 @@ const String FIRMWARE_VERSION = "1.4.0";
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
 
-Adafruit_BME680 bme;
-
-const int oneWireBus = 2;  // io2 — io3 est UART0 RX, ne pas utiliser pour OneWire
-OneWire oneWire(oneWireBus);
-DallasTemperature sensors(&oneWire);
 // Variable Cron
 
 String crontabString;
@@ -114,11 +101,6 @@ int filedelai;
 int filesender = -1;
 int filereceivientstation = -1;
 unsigned long ltgdel = 0;
-bool sensorstart = false;
-bool sensor_bme680 = false;
-bool sensor_aht20 = false;
-bool sensor_bmp280 = false;
-bool sensor_ds18b20 = false;
 int lastMinuteChecked = -1;
 unsigned long timegeth = 0;
 int pingCount = 0; // Nombre actuel d'entrees dans la liste
@@ -1556,224 +1538,6 @@ String formatNumber(int number, int digits) {
   return String(buffer);
 }
 
-
-String exportdata(String ver){
-  if(ver == 0){
-    interpreter("gmea:0");
-  }
-  delay(50);
-  loraToSD();
-  File myFile;
-
-  myFile = SD.open("/data.ver", FILE_READ);       
-  String datastructver = "";
-  if (myFile) {
-    while (myFile.available()) {
-      datastructver += (char)myFile.read();
-    }
-    myFile.close();
-  }
-
-  String path = "/";
-  path += String(ver);
-  path += ".datadump";
-  myFile = SD.open(path, FILE_READ);       
-  String indumpe = "";
-  if (myFile) {
-    while (myFile.available()) {
-      indumpe += (char)myFile.read();
-    }
-    myFile.close();
-  }
-
-  myFile = SD.open(path, FILE_WRITE);   
-    if (myFile) {
-      myFile.print("");
-      myFile.close();
-    }
-    else{
-      logN("[ERREUR SD] Impossible d'ecrire le fichier de mesures capteur");
-    }
-
-    sdToLora();
-
-  int i = 0;
-  while(getValue(datastructver, ';', i) != "") {
-    String parsver = getValue(datastructver, ';', i);
-    if(getValue(parsver, ' ', 0) == ver){
-      String tortdat = "data:";
-      tortdat += localAddress;
-      tortdat += ":";
-      tortdat += String(ver);
-      tortdat += compildata(getValue(parsver, ' ', 1), indumpe);
-      return(tortdat);
-    }
-    i ++;
-  } 
-}
-
-String compildata(String outstandstruct, String indump){
-  int i = 0;
-  String compileddata = "";
-  while(getValue(outstandstruct, ':', i) != "") {
-    compileddata += ":";
-    compileddata += extractvalue(indump, getValue(outstandstruct, ':', i));
-    i ++;
-  }
-  return(compileddata);
-}
-
-String extractvalue(String indump, String rshval){
-
-  if(rshval.substring(0, 1) == "n"){
-    float temprecoval = 0;
-    int temprecocon = 0;
-    int i = 0;
-    while(getValue(indump, ';', i) != "") {
-      String toandump = getValue(indump, ';', i);
-      if(getValue(toandump, ':', 0) == rshval){
-        temprecoval = temprecoval + getValue(toandump, ':', 1).toFloat();
-        temprecocon ++;
-      }
-      i ++;
-    }
-    return(String(temprecoval/temprecocon));
-  }
-  if(rshval.substring(0, 1) == "t"){
-    String temprecoval = "";
-    int i = 0;
-    while(getValue(indump, ';', i) != "") {
-      String toandump = getValue(indump, ';', i);
-      if(getValue(toandump, ':', 0) == rshval){
-        String tempvalrc = getValue(toandump, ':', 1);
-        if(tempvalrc.substring(tempvalrc.length()-1, tempvalrc.length()) == ";"){
-          temprecoval = tempvalrc.substring(0, tempvalrc.length()-1);
-        }
-        else{
-          temprecoval = tempvalrc;
-        }
-      }
-      i ++;
-    }
-    return(temprecoval);
-  }
-}
-
-void startsensor(){
-  if (sensor_bme680) {
-    if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
-    bme.setTemperatureOversampling(BME680_OS_8X);
-    bme.setHumidityOversampling(BME680_OS_2X);
-    bme.setPressureOversampling(BME680_OS_4X);
-    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-    bme.setGasHeater(320, 150);
-  }
-
-  if (sensor_aht20) {
-    if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
-  }
-
-  if (sensor_bmp280) {
-    if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
-    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
-                    Adafruit_BMP280::SAMPLING_X2,      /* Temp. oversampling */
-                    Adafruit_BMP280::SAMPLING_X16,     /* Pressure oversampling */
-                    Adafruit_BMP280::FILTER_X16,       /* Filtering. */
-                    Adafruit_BMP280::STANDBY_MS_500);  /* Standby time. */
-  }
-  if (sensor_ds18b20) {
-    sensors.begin();  
-    logV("sensor:DS18b20 ok");
-  }
-}
-
-void measuretodump(int ver){
-  if(sensorstart == false){
-    startsensor();
-    sensorstart = true;
-  }
-  String tosdarg = "";
-  if(ver == 0){
-    // handled separately by gmea command
-  }
-  if(ver == 1){
-    unsigned long endTime = bme.beginReading();
-    if (endTime == 0) {
-      logV("sensor:BME680 begin err");
-      return;
-    }
-
-    if (!bme.endReading()) {
-      logV("sensor:BME680 read err");
-      return;
-    }
-    tosdarg += "ntemp:";
-    tosdarg += bme.temperature;
-    tosdarg += ";";
-    tosdarg += "nhum:";
-    tosdarg += bme.humidity;
-    tosdarg += ";";
-    tosdarg += "npres:";
-    tosdarg += (bme.pressure / 100.0);
-    tosdarg += ";";
-    tosdarg += "nres:";
-    tosdarg += (bme.gas_resistance / 1000.0);
-    tosdarg += ";";
-    tosdarg += "ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-
-    logV("sensor:v1 " + tosdarg);
-  }
-
-  if(ver == 2){
-    tosdarg += "test:ok;tsp:okb;";
-    logV("sensor:v2 " + tosdarg);
-  }
-  if(ver == 3){
-  sensors_event_t humidity, temp;
-  aht.getEvent(&humidity, &temp);
-  tosdarg += "ntemp:";
-    tosdarg += temp.temperature;
-    tosdarg += ";nhum:";
-    tosdarg += humidity.relative_humidity;
-    tosdarg += ";npres:";
-    tosdarg += (bmp.readPressure());
-    tosdarg += ";ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-    logV("sensor:v3 " + tosdarg);
-  }
-  if(ver == 4){
-    sensors.requestTemperatures(); 
-    delay(50);
-    tosdarg += "ntemp:";
-    tosdarg += sensors.getTempCByIndex(0);
-    tosdarg += ";ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-    logV("sensor:v4 " + tosdarg);
-  }
-
-    delay(50);
-    loraToSD();
-    File myFile;
-    String path = "/";
-    path += String(ver);
-    path += ".datadump";
-    myFile = SD.open(path, FILE_APPEND);
-    if (myFile) {
-      myFile.print(tosdarg);
-      myFile.close();
-    }
-    else{
-      logN("[ERREUR SD] Impossible d'ecrire dans " + path);
-    }
-
-    sdToLora();
-
-}
-
 void readsd(bool allrecover){
       loraToSD();
        File myFile;
@@ -1841,20 +1605,6 @@ void readsd(bool allrecover){
       sdtocron = getValue(sdtocron, '\n', 0);
       logD("cron:" + sdtocron);
       crontabString = sdtocron;
-
-      myFile = SD.open("/sensor.cfg", FILE_READ);
-      String sdtosensor = "";
-      if (myFile) {
-        while (myFile.available()) {
-          sdtosensor += (char)myFile.read();
-        }
-        myFile.close();
-      }
-      sensor_bme680 = getValue(sdtosensor, ':', 1).toInt() == 1;
-      sensor_aht20  = getValue(sdtosensor, ':', 3).toInt() == 1;
-      sensor_bmp280 = getValue(sdtosensor, ':', 5).toInt() == 1;
-      sensor_ds18b20 = getValue(sdtosensor, ':', 7).toInt() == 1;
-      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280) + " DS18b20:" + String(sensor_ds18b20));
 
       initGaloisField();
 
@@ -1934,28 +1684,7 @@ void writetosd(){
       logN("[ERREUR SD] Impossible d'ecrire /e.cfg (etat)");
     }
 
-    writeSensorCfg();
-
     sdToLora();
-}
-
-void writeSensorCfg(){
-  String varstosd = "bme680:";
-  varstosd += sensor_bme680 ? "1" : "0";
-  varstosd += ":aht20:";
-  varstosd += sensor_aht20  ? "1" : "0";
-  varstosd += ":bmp280:";
-  varstosd += sensor_bmp280 ? "1" : "0";
-  varstosd += ":ds18b20:";
-  varstosd += sensor_ds18b20 ? "1" : "0";
-
-  File sensorFile = SD.open("/sensor.cfg", FILE_WRITE);
-  if (sensorFile) {
-    sensorFile.println(varstosd);
-    sensorFile.close();
-  } else {
-    logN("[ERREUR SD] Impossible d'ecrire /sensor.cfg");
-  }
 }
 
 bool exportcache() {
@@ -3011,31 +2740,6 @@ void interpreter(String msg){
       ioOutput("CFG:OK");
     }
   }
-  // -- getsensor : envoie l'etat des capteurs au configurateur --
-  if(cmd == "getsensor"){
-    String s;
-    s += sensor_bme680 ? 1 : 0; s += ":";
-    s += sensor_aht20  ? 1 : 0; s += ":";
-    s += sensor_bmp280 ? 1 : 0; s += ":";
-    s += sensor_ds18b20 ? 1 : 0; s += ":";
-    ioOutput("SENSOR:" + s);
-  }
-  // -- setsensor : recoit la config capteurs, applique et sauvegarde --
-  // Format attendu : setsensor:<bme680>:<aht20>:<bmp280>
-  if(cmd == "setsensor"){
-    int fieldCount = 0;
-    for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
-    if(fieldCount < 3){
-      ioOutput("SENSOR:ERR:format invalide (" + String(fieldCount) + "/3 champs)");
-    } else {
-      sensor_bme680 = getValue(msg,':',1).toInt() == 1;
-      sensor_aht20  = getValue(msg,':',2).toInt() == 1;
-      sensor_bmp280 = getValue(msg,':',3).toInt() == 1;
-      sensor_ds18b20 = getValue(msg,':',4).toInt() == 1;
-      writeSensorCfg();
-      ioOutput("SENSOR:OK");
-    }
-  }
   if(cmd == "data"){
     logN(msg.substring(5, msg.length()));
   }
@@ -3299,24 +3003,6 @@ void interpreter(String msg){
     tosenddifh += String(rtc.getLocalEpoch());
     sendMessage(1, tosenddifh, 0);
     logD("gdfh:" + tosenddifh);
-    }
-    if(cmd == "dexp"){
-      String togate = exportdata(getValue(msg, ':', 1));
-      logD("dexp:" + togate);
-      String tempid = generateid();
-      String load = "send:";
-      load += stationgateway;
-      load += ":load:";
-      load += localAddress;
-      load += ":";
-      load += togate.length();
-      load += ":";
-      load += tempid;
-      load += ":";
-      load += togate;
-      logD("dexp:load " + load);
-      togateAddCommand(tempid.toInt(), load);
-      interpreter(load);
     }
     if(cmd == "gmea"){
       float batt = analogReadMilliVolts(0);
