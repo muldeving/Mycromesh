@@ -1,7 +1,7 @@
 #include "LiteLora.h"
 #include <limits.h>
 #include <ESP32Time.h>
-#include "esp_sleep.h"
+
 #include "driver/gpio.h"
 #include <SD.h>
 #include <time.h>
@@ -26,7 +26,7 @@ LiteLora lora;
 
 const String FIRMWARE_VERSION = "1.4.0";
 
-#define uS_TO_S_FACTOR 1000000
+
 
 #define PACKET_SIZE 180
 #define GROUP_K 32
@@ -56,8 +56,7 @@ long starttimeout = 15000;      // Duree timout procudure start - stocke en ms, 
 int localAddress = 61;          // address of this device
 long DELAY = 3600000;           // Delai en millisecondes - stocke en ms, p.cfg en secondes
 long MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree - stocke en ms, p.cfg en secondes
-long actiontimerdel = 30;
-bool maintmode = true;
+
 int stationgateway = 1;
 long TOGATE_COMMAND_TIMEOUT = 60000;  // stocke en ms, p.cfg en secondes
 long NETIO_TIMEOUT     = 300000;      // ms sans activite avant fermeture automatique du tunnel - stocke en ms, p.cfg en secondes
@@ -83,7 +82,7 @@ bool          netioSlave        = false;   // cette station est l'esclave du tun
 int           netioRemote       = -1;      // adresse de la station distante
 unsigned long netioLastActivity = 0;       // horodatage de la derniere activite (millis)
 int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegarde avant activation du tunnel
-bool          ntioPrevMaintMode = true;    // etat maintmode sauvegarde avant activation du tunnel
+
 
 // variables d'etat
 
@@ -135,9 +134,7 @@ int pingphase = 0;
 unsigned long tmps = 0;
 int numEdges = 0;
 int numVertices = 0;
-unsigned long actiontimer = 0;
-unsigned long sleeptimer = 0;
-int stationstat = 0;
+
 const int MAX_COMMANDS = 10;
 int nbtogatefail = 0;
 unsigned long ltgdelfile = 0;
@@ -318,7 +315,7 @@ void closeNetioTunnel() {
   netioMaster       = false;
   netioSlave        = false;
   ioMode            = ntioPrevIoMode;
-  maintmode         = ntioPrevMaintMode;
+
   netioRemote       = -1;
   netioLastActivity = 0;
 }
@@ -1783,9 +1780,6 @@ void measuretodump(int ver){
     tosdarg += "tstartstat:";
     tosdarg += String(startstat);
     tosdarg += ";";
-    tosdarg += "tmaintmode:";
-    tosdarg += String(maintmode);
-    tosdarg += ";";
     tosdarg += "trxglob:";
     tosdarg += rxglob;
     tosdarg += ";";
@@ -1947,12 +1941,10 @@ void readsd(bool allrecover){
       localAddress = getValue(sdtopar, ':', 2).toInt();
       DELAY = getValue(sdtopar, ':', 3).toInt() * 1000L;
       MAX_ENTRY_AGE = getValue(sdtopar, ':', 4).toInt() * 1000L;
-      actiontimerdel = getValue(sdtopar, ':', 5).toInt();
-      maintmode = getValue(sdtopar, ':', 6).toInt();
-      stationgateway = getValue(sdtopar, ':', 7).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt() * 1000L;
-      { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
+      stationgateway = getValue(sdtopar, ':', 5).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 6).toInt() * 1000L;
+      { int sl = getValue(sdtopar, ':', 7).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(sdtopar, ':', 8).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
       { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft = getValue(sdtopar, ':', 12).toInt(); if(ft > 0) filetimeout = ft; }
       { int fxt = getValue(sdtopar, ':', 13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
@@ -2014,10 +2006,6 @@ void writetosd(){
     varptosd += DELAY / 1000;
     varptosd += ":";
     varptosd += MAX_ENTRY_AGE / 1000;
-    varptosd += ":";
-    varptosd += actiontimerdel;
-    varptosd += ":";
-    varptosd += maintmode;
     varptosd += ":";
     varptosd += stationgateway;
     varptosd += ":";
@@ -2603,9 +2591,7 @@ void setup() {
   }
   else{
     readsd(0);
-    if(maintmode == 0){
-      startstat = 1;      
-    }
+    startstat = 1;
   }
 
   if (localAddress == 0){
@@ -2614,14 +2600,11 @@ void setup() {
     localAddress = 61;          // address of this device
     DELAY = 3600000;           // Delai en millisecondes (ici 5 secondes)
     MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree
-    actiontimerdel = 30;
-    maintmode = true;
   }
 
   if (ioMode == IO_BLUETOOTH) startBLE();
 
   logN("[OK] Noeud #" + String(localAddress) + " demarre - firmware " + FIRMWARE_VERSION);
-  actiontimer = (millis()/1000);
 
   // Si ce demarrage fait suite a une mise a jour OTA, planifie la diffusion de la version
   // firmware a l'ensemble du reseau 30 secondes apres le boot
@@ -2660,7 +2643,7 @@ void loop() {
     fpingdel = millis() / 1000;
   }
 
-  if(startstat < 7 && startstat > 0 && maintmode == false){
+  if(startstat < 7 && startstat > 0){
     startprocedure();
   }
 
@@ -2705,27 +2688,7 @@ void loop() {
     interpreter("trsp:" + String(savedRemote) + ":nticlose");
   }
 
-  if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
-    if(stationstat == 0 && maintmode == false){      
-      stationstat = 1;
-      logN("[VEILLE] Aucune activite detectee, mise en veille imminente...");
-      writetosd();
-      lora.receive();
-      delay(100);
-      int nextwup = nextWakeup() - 5;
-      logN("[VEILLE] Entree en sommeil profond - reveil dans " + String(nextwup/60) + " min (" + String(nextwup) + "s)");
-      if(nextwup > 0){        
-        esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
-      }
-      esp_deep_sleep_start();
-    }
-  }
-  else{
-    if(stationstat == 1){
-      logN("[REVEIL] Reprise de l'activite apres la veille");
-    }
-    stationstat = 0;
-  }
+
   if (filereceivientstation > -1 && (isfdeson == 0 || infilecache == 0) && (((millis()/1000) - filetxdelai) > filetxtimeout || filetxdelai > (millis()/1000))){
     filereceivientstation = -1;
     logN("[ERREUR] Transfert fichier echoue : le noeud destinataire ne repond plus");
@@ -2816,7 +2779,7 @@ void sendMessage(bool wake, String outgoing, int destination) {
   lora.receive();
   msgCount++;                           // increment message ID
   txcnt ++;
-  actiontimer = (millis()/1000);
+
   lastair = millis();
 }
 
@@ -2826,7 +2789,7 @@ void onReceive() {
   if (packetSize == 0) return;
   lora.receive();
 
-  actiontimer = (millis()/1000);
+
 
   // read packet header bytes:
   int recipient = rxBuf[0];
@@ -3107,82 +3070,6 @@ bool cronFieldMatch(const String& field, int value) {
   return field.toInt() == value; 
 }
 
-int nextWakeup() {
-  time_t now = rtc.getEpoch();
-  struct tm tm_candidate;
-  struct tm tm_now = rtc.getTimeStruct(); 
-
-  for (int offset = 1; offset <= 86400; offset++) {
-    time_t candidate_time = now + offset;
-    localtime_r(&candidate_time, &tm_candidate);
-
-    if (tm_candidate.tm_sec != 0) {
-        continue; 
-    }
-
-    int mm = tm_candidate.tm_min;
-    int hh = tm_candidate.tm_hour;
-    int jj = tm_candidate.tm_mday;
-    int MM = tm_candidate.tm_mon + 1;
-    int JJ = tm_candidate.tm_wday;
-
-    int start = 0;
-    int end = crontabString.indexOf(';');
-
-    while (end != -1) {
-      String cronEntry = crontabString.substring(start, end);
-      cronEntry.trim();
-      int nextStart = end + 1;
-      end = crontabString.indexOf(';', nextStart);
-
-      int lastSpace = cronEntry.lastIndexOf(' ');
-      if (lastSpace == -1) {
-        start = nextStart;
-        continue;
-      }
-
-      String timeFields = cronEntry.substring(0, lastSpace);
-      String fields[5]; // Expect 5 fields
-      int fieldCount = 0, currentPos = 0, lastPos = 0;
-
-      while (currentPos < timeFields.length() && fieldCount < 5) {
-          if (timeFields.charAt(currentPos) == ' ') {
-              if (currentPos > lastPos) {
-                  fields[fieldCount++] = timeFields.substring(lastPos, currentPos);
-                  fields[fieldCount-1].trim();
-              } else {
-                  fieldCount = -1; break;
-              }
-              lastPos = currentPos + 1;
-          }
-          currentPos++;
-      }
-      if (fieldCount >= 0 && fieldCount < 5 && lastPos < timeFields.length()) {
-          fields[fieldCount++] = timeFields.substring(lastPos);
-          fields[fieldCount-1].trim();
-      }
-
-      if (fieldCount != 5) {
-        start = nextStart;
-        continue;
-      }
-
-      if (
-        // No seconds check
-        cronFieldMatch(fields[0], mm) &&
-        cronFieldMatch(fields[1], hh) &&
-        cronFieldMatch(fields[2], jj) &&
-        cronFieldMatch(fields[3], MM) &&
-        cronFieldMatch(fields[4], JJ)
-      ) {
-        return offset; 
-      }
-
-      start = nextStart;
-    }
-  }
-  return -1; 
-}
 
 void changepval(String parn, String parv){
   if(parn == "stationgateway"){
@@ -3210,10 +3097,7 @@ void changepval(String parn, String parv){
     MAX_ENTRY_AGE = parv.toInt();
     logN("[CONFIG] Parametre 'MAX_ENTRY_AGE' mis a jour : " + String(MAX_ENTRY_AGE) + " ms");
   }
-  if(parn == "actiontimerdel"){
-    actiontimerdel = parv.toInt();
-    logN("[CONFIG] Delai d'inactivite avant veille mis a jour : " + String(actiontimerdel) + " s");
-  }
+
   if(parn == "TOGATE_COMMAND_TIMEOUT"){
     TOGATE_COMMAND_TIMEOUT = parv.toInt();
     logN("[CONFIG] Timeout gateway mis a jour : " + String(TOGATE_COMMAND_TIMEOUT) + " ms");
@@ -3231,7 +3115,7 @@ void changepval(String parn, String parv){
 
 void interpreter(String msg){  
   String cmd = getValue(msg, ':', 0);
-  actiontimer = (millis()/1000);
+
 
   if(cmd == "read"){
       readsd(1);
@@ -3249,8 +3133,6 @@ void interpreter(String msg){
     cfg += localAddress;                  cfg += ":";
     cfg += DELAY / 1000;                  cfg += ":";
     cfg += MAX_ENTRY_AGE / 1000;          cfg += ":";
-    cfg += actiontimerdel;                cfg += ":";
-    cfg += maintmode;                     cfg += ":";
     cfg += stationgateway;                cfg += ":";
     cfg += TOGATE_COMMAND_TIMEOUT / 1000; cfg += ":";
     cfg += serialLevel;                   cfg += ":";
@@ -3273,11 +3155,9 @@ void interpreter(String msg){
       localAddress           = getValue(msg,':',3).toInt();
       DELAY                  = getValue(msg,':',4).toInt() * 1000L;
       MAX_ENTRY_AGE          = getValue(msg,':',5).toInt() * 1000L;
-      actiontimerdel         = getValue(msg,':',6).toInt();
-      maintmode              = getValue(msg,':',7).toInt();
-      stationgateway         = getValue(msg,':',8).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',9).toInt() * 1000L;
-      { int sl = getValue(msg,':',10).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      stationgateway         = getValue(msg,':',6).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',7).toInt() * 1000L;
+      { int sl = getValue(msg,':',8).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
       { int im = getValue(msg,':',11).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
       { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft  = getValue(msg,':',13).toInt(); if(ft  > 0) filetimeout  = ft; }
@@ -3554,17 +3434,7 @@ void interpreter(String msg){
     if(cmd == "star"){
       startstat = 1;
     }
-    if(cmd == "sho"){
-      logN("[MODE] Maintenance actuellement " + String(maintmode ? "activee (veille desactivee)" : "desactivee (mode nominal)"));
-    }
-    if(cmd == "maint"){
-      maintmode = true;
-      logN("[MODE] Passage en mode maintenance - la veille automatique est desactivee");
-    }
-    if(cmd == "norm"){
-      maintmode = false;
-      logN("[MODE] Passage en mode nominal - la veille automatique est activee");
-    }
+
     if(cmd == "stam"){
       rtc.setTime((getValue(msg, ':', 1)).toInt());
       startstat = 8;
@@ -3950,9 +3820,7 @@ void interpreter(String msg){
       } else {
         ioOutput("[NETIO] Ouverture du tunnel vers le noeud #" + String(slaveAddr) + "...");
         ntioPrevIoMode    = ioMode;
-        ntioPrevMaintMode = maintmode;
         netioRemote       = slaveAddr;
-        maintmode         = true;
         netioLastActivity = millis();
         // Paquet d'initialisation envoye via trsp (fiable, avec accuse de reception)
         interpreter("trsp:" + String(slaveAddr) + ":ntiopen:" + String(localAddress));
@@ -3968,9 +3836,7 @@ void interpreter(String msg){
       int masterAddr = getValue(msg, ':', 1).toInt();
       if (!netioMaster && !netioSlave && masterAddr > 0) {
         ntioPrevIoMode    = ioMode;
-        ntioPrevMaintMode = maintmode;
         netioRemote       = masterAddr;
-        maintmode         = true;
         netioLastActivity = millis();
         logN("[NETIO] Mode esclave active - maitre : noeud #" + String(masterAddr));
         // Confirmer au maitre via trsp (fiable) avant de basculer le mode
