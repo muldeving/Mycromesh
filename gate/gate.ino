@@ -104,6 +104,7 @@ int pingCount = 0; // Nombre actuel d'entrees dans la liste
 int dataCount = 0;        // Compteur de valeurs stockees
 unsigned long lastAddTime = 0; // Temps de la derniere addition
 int sender;
+int pingphase = 0;
 unsigned long tmps = 0;
 int numEdges = 0;
 int numVertices = 0;
@@ -481,27 +482,20 @@ void checkAndRemoveOldPingEntries() {
         // Augmenter nbping et mettre a jour pingTime
         pingList[i].nbping++;
         pingList[i].pingTime = currentMillis;
-        if (pingList[i].nbtoping == 0) {
-          logN("[PING] Envoi des sondes de decouverte reseau (vague " + String(pingList[i].nbping) + "/3)...");
-          sendMessage(1, "ping", 0);
-        } else {
-          logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
-          String tempping = "trsm:";
-          tempping += pingList[i].nbtoping;
-          tempping += ":ping";
-          scheduleCommand(300, tempping);
-        }
+        logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
+
+        String tempping = "trsm:";
+        tempping += pingList[i].nbtoping;
+        tempping += ":ping";
+        scheduleCommand(300, tempping);
+
         i++; // Passer a l'entree suivante
       } else {
-        if (pingList[i].nbtoping == 0) {
-          logN("[PING] Decouverte reseau terminee.");
-        } else {
-          logD("ping:rm " + String(pingList[i].nbtoping));
-          String outgoingumap = exportEdgesContainingVertex(localAddress);
-          addValue(getValue(outgoingumap, ':', 1));
-          logD("umap:" + outgoingumap);
-          sendMessage(1, outgoingumap, 0);
-        }
+        logD("ping:rm " + String(pingList[i].nbtoping));
+        String outgoingumap = exportEdgesContainingVertex(localAddress);
+        addValue(getValue(outgoingumap, ':', 1));
+        logD("umap:" + outgoingumap);
+        sendMessage(1, outgoingumap, 0);
         for (int j = i; j < pingCount - 1; j++) {
           pingList[j] = pingList[j + 1];
         }
@@ -2123,7 +2117,28 @@ void setup() {
 void loop() {
   handleSerialInput();
   if (lora.available()) { onReceive(); }
-      
+
+  if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
+    sendMessage(1, "ping", 0);
+    pingphase = 2;
+    logV("ping:2");
+    tmps = (millis()/1000);
+  }
+  if(pingphase == 2 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
+    sendMessage(1, "ping", 0);
+    pingphase = 3;
+    logV("ping:3");
+    tmps = (millis()/1000);
+  }
+  if(pingphase == 3 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
+    pingphase = 0;
+    String outgoingumap = exportEdgesContainingVertex(localAddress);
+    logD("umap:" + outgoingumap);
+    addValue(getValue(outgoingumap, ':', 1));
+    sendMessage(1, outgoingumap, 0);
+    logN("[PING] Decouverte terminee — " + String(numEdges) + " lien(s) dans la table de routage");
+  }
+
 
   if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
@@ -2689,8 +2704,8 @@ void interpreter(String msg){
   if(cmd == "pigo"){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
-      logN("[PING] Envoi des sondes de decouverte reseau (vague 1/3)...");
-      addPingEntry(0, 1);
+      pingphase = 1;
+      logN("[PING] Envoi des sondes de decouverte reseau...");
       tmps = (millis()/1000);
     }  
     if(cmd == "dijk"){
