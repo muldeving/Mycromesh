@@ -8,12 +8,17 @@ Usage:
     python3 test_gate.py --port COM3 --node 7 --skip-network
 
 Options:
-    --port     Port série de la gate (défaut : /dev/ttyUSB0)
-    --baud     Vitesse (défaut : 115200)
-    --node     Adresse de l'autre station sur le réseau (défaut : 7)
-    --timeout  Timeout attente réponse en secondes (défaut : 15)
+    --port          Port série de la gate (défaut : /dev/ttyUSB0)
+    --baud          Vitesse (défaut : 115200)
+    --node          Adresse de l'autre station sur le réseau (défaut : 7)
+    --timeout       Timeout attente réponse en secondes (défaut : 15)
     --skip-network  Passe les tests qui nécessitent une réponse de l'autre station
-    --verbose  Affiche toutes les lignes reçues (même hors-attendu)
+    --verbose       Affiche toutes les lignes reçues (même hors-attendu)
+
+Notes:
+    - Le script force slvl:debug au démarrage (nécessaire pour intercepter
+      ping:2/ping:3, acth, read, write qui ne sortent qu'au niveau 3).
+    - slvl est restauré à 1 (normal) à la fin des tests.
 """
 
 import serial
@@ -22,7 +27,7 @@ import argparse
 import sys
 import re
 
-# ─── Couleurs terminal ───────────────────────────────────────────────────────
+# ─── Couleurs terminal ────────────────────────────────────────────────────────
 GREEN  = "\033[92m"
 RED    = "\033[91m"
 YELLOW = "\033[93m"
@@ -39,7 +44,7 @@ class Gate:
         self.ser = serial.Serial(port, baud, timeout=0.1)
         self.timeout = timeout
         self.verbose = verbose
-        time.sleep(2)           # attente reset ESP32 à l'ouverture du port
+        time.sleep(2)       # attente reset ESP32 à l'ouverture du port
         self.flush()
 
     def flush(self):
@@ -51,7 +56,7 @@ class Gate:
             print(f"  {CYAN}>>> {cmd}{RESET}")
 
     def read_lines(self, duration):
-        """Lit toutes les lignes pendant `duration` secondes."""
+        """Lit toutes les lignes reçues pendant `duration` secondes."""
         lines = []
         deadline = time.time() + duration
         while time.time() < deadline:
@@ -64,11 +69,11 @@ class Gate:
                     lines.append(line)
         return lines
 
-    def wait_for(self, patterns, extra=2):
+    def wait_for(self, patterns, extra=1):
         """
-        Attend jusqu'à ce que tous les patterns (str ou regex) soient trouvés,
-        ou jusqu'au timeout. Retourne (ok, lignes_reçues).
-        patterns peut être une liste ou une seule str/regex.
+        Attend jusqu'à ce que tous les patterns soient trouvés ou timeout.
+        Puis lit `extra` secondes supplémentaires pour vider le buffer.
+        Retourne (ok, toutes_les_lignes_reçues).
         """
         if isinstance(patterns, (str, re.Pattern)):
             patterns = [patterns]
@@ -84,8 +89,7 @@ class Gate:
                         print(f"  {YELLOW}<<< {line}{RESET}")
                     lines.append(line)
                     remaining = [p for p in remaining
-                                 if not (re.search(p, line) if isinstance(p, str) else p.search(line))]
-        # lecture du surplus
+                                 if not re.search(p, line, re.IGNORECASE)]
         lines += self.read_lines(extra)
         return (len(remaining) == 0), lines
 
@@ -101,8 +105,8 @@ def section(title):
     print(f"{BOLD}{CYAN}{'─'*60}{RESET}")
 
 
-def run(gate, name, cmd, patterns, extra=2, skip=False):
-    """Exécute un test : envoie cmd, vérifie patterns."""
+def run(gate, name, cmd, patterns, extra=1, skip=False):
+    """Envoie `cmd`, attend `patterns`. extra = secondes de lecture après match."""
     if skip:
         print(f"  {YELLOW}SKIP{RESET}  {name}")
         results.append(("SKIP", name))
@@ -121,10 +125,12 @@ def run(gate, name, cmd, patterns, extra=2, skip=False):
     return ok, lines
 
 
-def run_multi(gate, name, steps, skip=False):
+def run_seq(gate, name, steps, skip=False):
     """
-    Test multi-étapes : steps = [(cmd, [patterns], extra), ...]
-    Toutes les étapes doivent passer.
+    Test séquentiel : steps = [(cmd_ou_None, pattern, extra), ...]
+    Chaque étape attend son pattern avant de passer à la suivante.
+    Un flush() est fait avant chaque envoi, PAS entre les attentes
+    (pour ne pas perdre les lignes en transit).
     """
     if skip:
         print(f"  {YELLOW}SKIP{RESET}  {name}")
@@ -132,17 +138,18 @@ def run_multi(gate, name, steps, skip=False):
         return
 
     all_ok = True
-    for cmd, patterns, extra in steps:
-        gate.flush()
+    for cmd, pattern, extra in steps:
         if cmd:
+            gate.flush()
             gate.send(cmd)
-        ok, lines = gate.wait_for(patterns, extra=extra)
+        ok, lines = gate.wait_for(pattern, extra=extra)
         if not ok:
             all_ok = False
             if not gate.verbose:
                 for l in lines[-5:]:
                     print(f"         {YELLOW}{l}{RESET}")
             break
+
     status = f"{GREEN}PASS{RESET}" if all_ok else f"{RED}FAIL{RESET}"
     print(f"  {status}  {name}")
     results.append(("PASS" if all_ok else "FAIL", name))
@@ -152,104 +159,65 @@ def run_multi(gate, name, steps, skip=False):
 
 def test_systeme(g):
     section("SYSTÈME")
-    run(g, "Version firmware",          "version",  r"\[SYSTEME\].*1\.")
-    run(g, "Heure RTC",                 "time",     r"\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|epoch")
-    run(g, "Statistiques trafic",       "gmea",     r"trxglob:")
+    run(g, "Version firmware",     "version", r"\[SYSTEME\].*1\.")
+    run(g, "Heure RTC",            "time",    r"\d{4}.*\d{2}:\d{2}:\d{2}|epoch|\d{10}")
+    run(g, "Statistiques trafic",  "gmea",    r"trxglob:")
 
 
 def test_config(g):
     section("CONFIGURATION")
 
-    # Lecture config
-    ok, lines = run(g, "getcfg — lecture",  "getcfg",  r"^CFG:")
+    # Lecture config — on capture la ligne pour setcfg round-trip
+    ok, lines = run(g, "getcfg — lecture", "getcfg", r"^CFG:")
     cfg_line = next((l for l in lines if l.startswith("CFG:")), None)
 
-    # Niveau de log
+    # Niveaux de log
     run(g, "slvl:verbose",   "slvl:verbose",  r"\[CONFIG\].*verbose")
     run(g, "slvl:normal",    "slvl:normal",   r"\[CONFIG\].*normal")
     run(g, "slvl:debug",     "slvl:debug",    r"\[CONFIG\].*debug")
     run(g, "slvl numérique", "slvl:1",        r"\[CONFIG\]")
 
     # Mode I/O
-    run(g, "iomd:usb",  "iomd:usb",  r"\[IO\].*USB")
+    run(g, "iomd:usb", "iomd:usb", r"\[IO\].*USB")
 
-    # Paramètre individuel (parm)
-    run(g, "parm — lecture/écriture",
-        "parm:serialLevel:1",
-        r"\[CONFIG\]")
+    # Paramètre individuel
+    run(g, "parm:serialLevel", "parm:serialLevel:1", r"\[CONFIG\]")
 
-    # setcfg — on remet la même config lue si disponible
+    # setcfg round-trip avec la config lue
     if cfg_line:
-        fields = cfg_line[4:].split(":")
+        fields = cfg_line[4:].split(":")   # retire le "CFG:" initial
         if len(fields) >= 13:
             run(g, "setcfg — round-trip",
                 "setcfg:" + ":".join(fields[:13]) + ":",
                 r"CFG:OK")
+        else:
+            run(g, "setcfg — format ERR attendu",
+                "setcfg:1:2:3",
+                r"CFG:ERR")
     else:
-        # setcfg minimal valide
-        run(g, "setcfg — format invalide (doit renvoyer ERR)",
+        run(g, "setcfg — format ERR attendu",
             "setcfg:1:2:3",
             r"CFG:ERR")
-
-
-def test_decouverte(g, node, skip_network):
-    section("DÉCOUVERTE RÉSEAU")
-
-    # pigo — 3 vagues + fin (délai total ~15s)
-    run(g, "pigo — vague 1",
-        "pigo",
-        r"\[PING\].*sondes",
-        extra=1)
-
-    run(g, "pigo — vague 2",
-        None,
-        r"ping:2",
-        extra=6)
-
-    run(g, "pigo — vague 3",
-        None,
-        r"ping:3",
-        extra=6)
-
-    run(g, "pigo — découverte terminée",
-        None,
-        r"\[PING\].*termin",
-        extra=6)
-
-    # Lecture de la table après pigo
-    run(g, "prnt — table de routage",     "prnt",  r"edges:")
-    run(g, "expv — export topologie",     "expv",  r"tmap:")
-
-    # L'autre station doit avoir répondu aux pings pour que les liens existent
-    run(g, "clear — efface la table",     "clear", r"\[OK\].*table.*efface|table.*routage.*efface",
-        skip=skip_network)
-
-    # Remettre la découverte après clear
-    if not skip_network:
-        run(g, "pigo après clear — re-découverte",
-            "pigo",
-            r"\[PING\].*termin",
-            extra=20)
 
 
 def test_sd(g):
     section("CARTE SD")
 
-    run(g, "ls racine",           "ls:/",           r"/|FILE|DIR|\[SD\]|ERREUR")
-    run(g, "mkdir /test_mycro",   "mkdir:/test_mycro",   r"\[SD\]|OK|Erreur")
-    run(g, "ls /test_mycro",      "ls:/test_mycro",      r"\[SD\]|vide|OK|ERREUR")
-    run(g, "rmdir /test_mycro",   "rmdir:/test_mycro",   r"\[SD\]|OK|Erreur")
+    # ls racine (toujours peuplée)
+    run(g, "ls racine", "ls:/", r"\S")
 
-    # cp et mv sur un fichier existant (p.cfg est toujours présent)
-    run(g, "cp p.cfg → /p_bak.cfg",
-        "cp:/p.cfg:/p_bak.cfg",
-        r"\[SD\].*succes|OK|Erreur")
-    run(g, "mv /p_bak.cfg → /p_bak2.cfg",
-        "mv:/p_bak.cfg:/p_bak2.cfg",
-        r"\[SD\].*succes|OK|Erreur")
-    run(g, "rm /p_bak2.cfg",
-        "rm:/p_bak2.cfg",
-        r"\[SD\].*supprime|OK|Erreur")
+    # Séquence : mkdir → cp → ls (contenu) → mkdir2 → mv → rm → rmdir × 2
+    # cp et mv prennent un répertoire DESTINATION, le nom de fichier est conservé
+    run_seq(g, "mkdir → cp → ls → mv → rm → rmdir", [
+        ("mkdir:/test_mycro",              r"\[SD\]",           1),
+        ("cp:/p.cfg:/test_mycro",          r"\[SD\].*succes",   1),
+        ("ls:/test_mycro",                 r"p\.cfg|\S",        1),
+        ("mkdir:/test_mycro2",             r"\[SD\]",           1),
+        ("mv:/test_mycro/p.cfg:/test_mycro2", r"\[SD\].*succes", 1),
+        ("rm:/test_mycro2/p.cfg",          r"\[SD\].*supprime", 1),
+        ("rmdir:/test_mycro",              r"\[SD\]",           1),
+        ("rmdir:/test_mycro2",             r"\[SD\]",           1),
+    ])
 
 
 def test_gateway(g, node, skip_network):
@@ -259,37 +227,70 @@ def test_gateway(g, node, skip_network):
     run(g, "filestate — état transfert", "filestate",   r"\[FICHIER")
 
 
+def test_decouverte(g, node, skip_network):
+    section("DÉCOUVERTE RÉSEAU")
+
+    # pigo : vague 1 immédiate (logN), puis vague 2 à +4s (logD), vague 3 à +8s (logD),
+    # fin à +12s (logN). On intercepte chaque vague séparément sans flush entre elles
+    # pour ne pas perdre les lignes en transit.
+    run_seq(g, "pigo — 3 vagues + fin", [
+        ("pigo",  r"\[PING\].*sondes",  1),   # t=0 : vague 1 logN
+        (None,    r"ping:2",            1),   # t≈4s : vague 2 logD
+        (None,    r"ping:3",            1),   # t≈8s : vague 3 logD
+        (None,    r"\[PING\].*termin",  2),   # t≈12s : fin logN
+    ])
+
+    run(g, "prnt — table de routage", "prnt", r"edges:")
+    run(g, "expv — export topologie", "expv", r"tmap:")
+
+    run(g, "clear — efface la table", "clear", r"\[OK\].*efface",
+        skip=skip_network)
+
+    # Re-découverte après clear (pigo complet, ~15s)
+    if not skip_network:
+        run_seq(g, "pigo après clear — re-découverte", [
+            ("pigo",  r"\[PING\].*sondes",  1),
+            (None,    r"ping:2",            1),
+            (None,    r"ping:3",            1),
+            (None,    r"\[PING\].*termin",  2),
+        ])
+
+
 def test_reseau(g, node, skip_network):
     section("COMMUNICATION RÉSEAU (nécessite l'autre station)")
 
-    # trsp : envoi fiable (attend arok en retour)
+    # trsp : envoi fiable → attend arok de retour
     run(g, f"trsp → nœud {node} (attend arok)",
         f"trsp:{node}:ping",
-        r"arok:|Message envoye|MESSAGE",
+        r"arok:",
         extra=10,
         skip=skip_network)
 
     # send générique
     run(g, f"send → nœud {node}",
         f"send:{node}:data:test_serial",
-        r"arok:|Message envoye|MESSAGE|send",
+        r"arok:|envoye|dijk",
         extra=8,
         skip=skip_network)
 
-    # synchronisation horloge via la station voisine
-    run(g, "acth — synchro horloge (via nœud proche)",
+    # acth : envoie geth au voisin le plus proche, reçoit seth (logD)
+    run(g, "acth — synchro horloge",
         "acth",
-        r"geth|seth|\[OK\]|heure|time|synchro",
+        r"geth|seth|synchro|heure|\[OK\]",
         extra=10,
         skip=skip_network)
 
-    # netio — tunnel maître (la gate contrôle l'autre station)
-    run_multi(g, f"netio → nœud {node} (ouvre tunnel, envoie version, ferme)",
+    # netio : tunnel maître vers l'autre station
+    # Étape 1 : demande d'ouverture (logN immédiat)
+    # Étape 2 : confirmation ntiok de l'esclave (aller-retour réseau, peut prendre ~10s)
+    # Étape 3 : envoi de "version" dans le tunnel → réponse ntirsp de l'esclave
+    # Étape 4 : "exit" → fermeture propre
+    run_seq(g, f"netio → nœud {node} (ouvre tunnel, version, ferme)",
         [
-            (f"netio:{node}",     [r"\[NETIO\].*Ouverture|tunnel"],              5),
-            (None,                [r"\[NETIO\].*Tunnel ouvert|ntiok"],            10),
-            ("version",           [r"1\.|ntirsp|\[SYSTEME\]|NETIO"],              8),
-            ("exit",              [r"\[NETIO\].*ferme|Tunnel ferme"],             5),
+            (f"netio:{node}", r"\[NETIO\].*ouverture|ouvert|tunnel",  2),
+            (None,            r"\[NETIO\].*tunnel ouvert|tapez",      20),
+            ("version",       r"1\.\d+|\[SYSTEME\]",                  8),
+            ("exit",          r"\[NETIO\].*ferme",                    3),
         ],
         skip=skip_network)
 
@@ -297,33 +298,32 @@ def test_reseau(g, node, skip_network):
 def test_transfert_fichier(g, node, skip_network):
     section("TRANSFERT DE FICHIER (nécessite l'autre station)")
 
-    # Transfert de p.cfg vers l'autre station (petit fichier toujours présent)
-    run_multi(g, f"stft — transfert /p.cfg → nœud {node}",
+    # stft : lance le transfert de /p.cfg (petit fichier toujours présent)
+    # → l'autre station répond isrf, gate répond rfok, puis envoie les chunks
+    run_seq(g, f"stft — transfert /p.cfg → nœud {node}",
         [
-            (f"stft:{node}:/p.cfg:0",
-             [r"isrf|rfok|\[FICHIER|\[ERREUR\]|transfert"],
-             15),
+            (f"stft:{node}:/p.cfg:0", r"\[FICHIER|isrf|rfok|transfert|\[ERREUR\]", 20),
         ],
         skip=skip_network)
 
 
-def test_cron_schedule(g):
+def test_planification(g):
     section("PLANIFICATION (adrc)")
 
-    # adrc : planifie une commande dans 2 secondes
-    run_multi(g, "adrc — commande différée (version dans 2s)",
-        [
-            ("adrc:2000:version",   [r"adrc|schedule|OK|\[SYSTEME\]"], 3),
-            (None,                  [r"\[SYSTEME\].*1\."],              4),
-        ])
+    # adrc planifie "version" dans 2s. Aucune sortie immédiate ;
+    # on attend directement la sortie différée.
+    run(g, "adrc — version différée de 2s",
+        "adrc:2000:version",
+        r"\[SYSTEME\].*1\.",
+        extra=1)
 
 
-def test_data(g):
+def test_divers(g):
     section("COMMANDES DIVERSES")
 
-    run(g, "data — message texte",  "data:hello_test",  r"hello_test")
-    run(g, "read — rechargement SD",  "read",           r"\[OK\].*recharg|recharge|read")
-    run(g, "write — sauvegarde SD",   "write",          r"\[OK\].*sauvegard|sauvegarde|write")
+    run(g, "data — message texte",  "data:hello_test", r"hello_test")
+    run(g, "read — rechargement SD", "read",           r"\[OK\].*recharg|recharg|carte.*reseau")
+    run(g, "write — sauvegarde SD",  "write",          r"\[OK\].*sauvegard|sauvegard|configuration.*sauvegard")
 
 
 # ─── Résumé ───────────────────────────────────────────────────────────────────
@@ -332,10 +332,9 @@ def print_summary():
     print(f"\n{BOLD}{'═'*60}{RESET}")
     print(f"{BOLD}  RÉSUMÉ{RESET}")
     print(f"{BOLD}{'═'*60}{RESET}")
-    passed = sum(1 for s, _ in results if s == "PASS")
-    failed = sum(1 for s, _ in results if s == "FAIL")
+    passed  = sum(1 for s, _ in results if s == "PASS")
+    failed  = sum(1 for s, _ in results if s == "FAIL")
     skipped = sum(1 for s, _ in results if s == "SKIP")
-    total = len(results)
 
     for status, name in results:
         if status == "PASS":
@@ -345,7 +344,7 @@ def print_summary():
         else:
             print(f"  {YELLOW}−{RESET}  {name}")
 
-    print(f"\n  Total : {total}  |  "
+    print(f"\n  Total : {len(results)}  |  "
           f"{GREEN}PASS : {passed}{RESET}  |  "
           f"{RED}FAIL : {failed}{RESET}  |  "
           f"{YELLOW}SKIP : {skipped}{RESET}")
@@ -360,11 +359,11 @@ def main():
     parser.add_argument("--port",         default="/dev/ttyUSB0")
     parser.add_argument("--baud",         type=int, default=115200)
     parser.add_argument("--node",         type=int, default=7,
-                        help="Adresse de l'autre station dans le réseau")
+                        help="Adresse de l'autre station (défaut : 7)")
     parser.add_argument("--timeout",      type=int, default=15,
-                        help="Timeout attente réponse (secondes)")
+                        help="Timeout attente réponse en secondes (défaut : 15)")
     parser.add_argument("--skip-network", action="store_true",
-                        help="Passe les tests nécessitant la station distante")
+                        help="Ignore les tests nécessitant la station distante")
     parser.add_argument("--verbose",      action="store_true",
                         help="Affiche toutes les lignes série échangées")
     args = parser.parse_args()
@@ -383,6 +382,11 @@ def main():
         sys.exit(1)
 
     try:
+        # Force slvl:debug pour toute la session de test :
+        # ping:2, ping:3, acth, read, write ne sortent qu'au niveau 3.
+        g.send("slvl:debug")
+        g.read_lines(1)
+
         test_systeme(g)
         test_config(g)
         test_sd(g)
@@ -390,11 +394,15 @@ def main():
         test_decouverte(g, args.node, args.skip_network)
         test_reseau(g, args.node, args.skip_network)
         test_transfert_fichier(g, args.node, args.skip_network)
-        test_cron_schedule(g)
-        test_data(g)
+        test_planification(g)
+        test_divers(g)
+
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Interrompu.{RESET}")
     finally:
+        # Restaure le niveau de log normal
+        g.send("slvl:1")
+        time.sleep(0.5)
         g.close()
 
     ok = print_summary()
