@@ -588,20 +588,27 @@ void checkAndRemoveOldPingEntries() {
         // Augmenter nbping et mettre a jour pingTime
         pingList[i].nbping++;
         pingList[i].pingTime = currentMillis;
-        logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
-        
-        String tempping = "trsm:";
-        tempping += pingList[i].nbtoping;
-        tempping += ":ping";
-        scheduleCommand(300, tempping);
-        
+        if (pingList[i].nbtoping == 0) {
+          logN("[PING] Envoi des sondes de decouverte reseau (vague " + String(pingList[i].nbping) + "/3)...");
+          sendMessage(1, "ping", 0);
+        } else {
+          logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
+          String tempping = "trsm:";
+          tempping += pingList[i].nbtoping;
+          tempping += ":ping";
+          scheduleCommand(300, tempping);
+        }
         i++; // Passer a l'entree suivante
       } else {
-        logD("ping:rm " + String(pingList[i].nbtoping));
-        String outgoingumap = exportEdgesContainingVertex(localAddress);
-        addValue(getValue(outgoingumap, ':', 1));
-        logD("umap:" + outgoingumap);
-        sendMessage(1, outgoingumap, 0);
+        if (pingList[i].nbtoping == 0) {
+          logN("[PING] Decouverte reseau terminee.");
+        } else {
+          logD("ping:rm " + String(pingList[i].nbtoping));
+          String outgoingumap = exportEdgesContainingVertex(localAddress);
+          addValue(getValue(outgoingumap, ':', 1));
+          logD("umap:" + outgoingumap);
+          sendMessage(1, outgoingumap, 0);
+        }
         for (int j = i; j < pingCount - 1; j++) {
           pingList[j] = pingList[j + 1];
         }
@@ -2791,17 +2798,8 @@ void interpreter(String msg){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
       logN("[PING] Envoi des sondes de decouverte reseau (vague 1/3)...");
-      scheduleCommand(2000, "pping:2");
-      scheduleCommand(4000, "pping:3");
-      scheduleCommand(7000, "pend");
+      addPingEntry(0, 1);
       tmps = (millis()/1000);
-    }
-    if(cmd == "pping"){
-      logN("[PING] Envoi des sondes de decouverte reseau (vague " + getValue(msg, ':', 1) + "/3)...");
-      sendMessage(1, "ping", 0);
-    }
-    if(cmd == "pend"){
-      logN("[PING] Decouverte reseau terminee.");
     }  
     if(cmd == "dijk"){
       if(getValue(msg, ':', 2).toInt() != localAddress){
