@@ -105,17 +105,24 @@ def section(title):
     print(f"{BOLD}{CYAN}{'─'*60}{RESET}")
 
 
-def run(gate, name, cmd, patterns, extra=1, skip=False):
-    """Envoie `cmd`, attend `patterns`. extra = secondes de lecture après match."""
+def run(gate, name, cmd, patterns, extra=1, skip=False, timeout=None):
+    """Envoie `cmd`, attend `patterns`.
+    extra   = secondes de lecture supplémentaires après le match.
+    timeout = override du timeout global pour ce test uniquement."""
     if skip:
         print(f"  {YELLOW}SKIP{RESET}  {name}")
         results.append(("SKIP", name))
         return None, []
 
+    prev = gate.timeout
+    if timeout is not None:
+        gate.timeout = timeout
     gate.flush()
     if cmd:
         gate.send(cmd)
     ok, lines = gate.wait_for(patterns, extra=extra)
+    gate.timeout = prev
+
     status = f"{GREEN}PASS{RESET}" if ok else f"{RED}FAIL{RESET}"
     print(f"  {status}  {name}")
     if not ok and not gate.verbose:
@@ -125,17 +132,22 @@ def run(gate, name, cmd, patterns, extra=1, skip=False):
     return ok, lines
 
 
-def run_seq(gate, name, steps, skip=False):
+def run_seq(gate, name, steps, skip=False, timeout=None):
     """
     Test séquentiel : steps = [(cmd_ou_None, pattern, extra), ...]
     Chaque étape attend son pattern avant de passer à la suivante.
     Un flush() est fait avant chaque envoi, PAS entre les attentes
     (pour ne pas perdre les lignes en transit).
+    timeout = override du timeout global pour toutes les étapes.
     """
     if skip:
         print(f"  {YELLOW}SKIP{RESET}  {name}")
         results.append(("SKIP", name))
         return
+
+    prev = gate.timeout
+    if timeout is not None:
+        gate.timeout = timeout
 
     all_ok = True
     for cmd, pattern, extra in steps:
@@ -150,6 +162,7 @@ def run_seq(gate, name, steps, skip=False):
                     print(f"         {YELLOW}{l}{RESET}")
             break
 
+    gate.timeout = prev
     status = f"{GREEN}PASS{RESET}" if all_ok else f"{RED}FAIL{RESET}"
     print(f"  {status}  {name}")
     results.append(("PASS" if all_ok else "FAIL", name))
@@ -264,26 +277,29 @@ def test_decouverte(g, node, skip_network):
 def test_reseau(g, node, skip_network):
     section("COMMUNICATION RÉSEAU (nécessite l'autre station)")
 
-    # trsp : envoi fiable → accusé [MESSAGE] en retour
+    # trsp : envoi fiable → accusé [MESSAGE] en retour (aller-retour dijkstra, peut dépasser 15s en debug)
     run(g, f"trsp → nœud {node} (attend accusé)",
         f"trsp:{node}:ping",
         r"\[MESSAGE\].*livre|\[MESSAGE\].*accuse|arok:",
-        extra=10,
-        skip=skip_network)
+        extra=2,
+        skip=skip_network,
+        timeout=30)
 
     # send générique → même accusé de réception
     run(g, f"send → nœud {node}",
         f"send:{node}:data:test_serial",
         r"\[MESSAGE\].*livre|\[MESSAGE\].*accuse|arok:",
-        extra=8,
-        skip=skip_network)
+        extra=2,
+        skip=skip_network,
+        timeout=30)
 
     # acth : envoie geth au voisin le plus proche, reçoit seth → logD
     run(g, "acth — synchro horloge",
         "acth",
         r"geth|seth|\[OK\].*heure|\[OK\].*synchro|horloge|rtc",
-        extra=10,
-        skip=skip_network)
+        extra=2,
+        skip=skip_network,
+        timeout=30)
 
     # netio : tunnel maître vers l'autre station
     # Étape 1 : demande d'ouverture (logN immédiat)
@@ -307,9 +323,10 @@ def test_transfert_fichier(g, node, skip_network):
     # → l'autre station répond isrf, gate répond rfok, puis envoie les chunks
     run_seq(g, f"stft — transfert /p.cfg → nœud {node}",
         [
-            (f"stft:{node}:/p.cfg:0", r"\[FICHIER|isrf|rfok|transfert|\[ERREUR\]", 20),
+            (f"stft:{node}:/p.cfg:0", r"\[FICHIER|isrf|rfok|transfert|\[ERREUR\]", 5),
         ],
-        skip=skip_network)
+        skip=skip_network,
+        timeout=30)
 
 
 def test_planification(g):
