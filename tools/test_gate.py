@@ -199,6 +199,11 @@ def test_config(g):
             "setcfg:1:2:3",
             r"CFG:ERR")
 
+    # Rétablit slvl:debug pour les sections suivantes
+    # (slvl:1 ci-dessus l'a abaissé ; ping:2/3, acth etc. ne sortent qu'au niveau 3)
+    g.send("slvl:debug")
+    g.read_lines(1)
+
 
 def test_sd(g):
     section("CARTE SD")
@@ -259,24 +264,24 @@ def test_decouverte(g, node, skip_network):
 def test_reseau(g, node, skip_network):
     section("COMMUNICATION RÉSEAU (nécessite l'autre station)")
 
-    # trsp : envoi fiable → attend arok de retour
-    run(g, f"trsp → nœud {node} (attend arok)",
+    # trsp : envoi fiable → accusé [MESSAGE] en retour
+    run(g, f"trsp → nœud {node} (attend accusé)",
         f"trsp:{node}:ping",
-        r"arok:",
+        r"\[MESSAGE\].*livre|\[MESSAGE\].*accuse|arok:",
         extra=10,
         skip=skip_network)
 
-    # send générique
+    # send générique → même accusé de réception
     run(g, f"send → nœud {node}",
         f"send:{node}:data:test_serial",
-        r"arok:|envoye|dijk",
+        r"\[MESSAGE\].*livre|\[MESSAGE\].*accuse|arok:",
         extra=8,
         skip=skip_network)
 
-    # acth : envoie geth au voisin le plus proche, reçoit seth (logD)
+    # acth : envoie geth au voisin le plus proche, reçoit seth → logD
     run(g, "acth — synchro horloge",
         "acth",
-        r"geth|seth|synchro|heure|\[OK\]",
+        r"geth|seth|\[OK\].*heure|\[OK\].*synchro|horloge|rtc",
         extra=10,
         skip=skip_network)
 
