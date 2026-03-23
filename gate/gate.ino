@@ -8,8 +8,6 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <Wire.h>
-#include <NimBLEDevice.h>
-
 Preferences prefs;
 
 ESP32Time rtc;
@@ -58,13 +56,12 @@ int serialLevel = 1;
 
 // Mode E/S : selectionne le canal actif pour ioOutput / handleSerialInput
 #define IO_USB       0
-#define IO_BLUETOOTH 1
+// IO_BLUETOOTH = 1 (reserve pour ajout futur)
 #define IO_NETIO     2   // tunnel reseau : entree/sortie via une autre station du maillage
 int ioMode = IO_USB;
 
 // Variables du tunnel reseau E/S (mode IO_NETIO)
 bool          netioMaster       = false;   // cette station est le maitre du tunnel
-bool          netioSlave        = false;   // cette station est l'esclave du tunnel
 int           netioRemote       = -1;      // adresse de la station distante
 unsigned long netioLastActivity = 0;       // horodatage de la derniere activite (millis)
 int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegarde avant activation du tunnel
@@ -199,97 +196,23 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
-// --- BLE UART (Nordic UART Service) ---
-#define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-
-NimBLEServer*         bleServer    = nullptr;
-NimBLECharacteristic* bleTxChar    = nullptr;
-bool               bleConnected = false;
-String             bleRxBuffer  = "";
-bool               bleRxReady   = false;
-
-class BLEServerCB : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer*, NimBLEConnInfo&)    override { bleConnected = true;  }
-  void onDisconnect(NimBLEServer* s, NimBLEConnInfo&, int) override {
-    bleConnected = false;
-    s->startAdvertising(); // relance la publicite pour permettre une reconnexion
-  }
-};
-
-class BLERxCB : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
-    bleRxBuffer = c->getValue().c_str();
-    bleRxReady  = true;
-  }
-};
-
-void startBLE() {
-
-  if (bleServer) return; // deja demarre
-  NimBLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
-  bleServer = NimBLEDevice::createServer();
-  bleServer->setCallbacks(new BLEServerCB());
-
-  NimBLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
-
-  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
-  // NimBLE gere automatiquement le descripteur CCCD (BLE2902), pas besoin de l'ajouter manuellement
-
-  NimBLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, NIMBLE_PROPERTY::WRITE);
-  rxChar->setCallbacks(new BLERxCB());
-
-  svc->start();
-
-  // Configure l'advertising : UUID du service NUS dans le paquet principal,
-  // nom du peripherique dans la scan response separee.
-  // Le nom ne peut pas etre dans le paquet principal : flags(3) + UUID128(18) + nom(14) = 35 > 31 octets.
-  // enableScanResponse(true) seul ne suffit pas en NimBLE v2.x - il faut passer les donnees explicitement.
-  NimBLEAdvertisementData scanResponse;
-  scanResponse.setName(("Mycromesh-" + String(localAddress)).c_str());
-
-  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(BLE_SERVICE_UUID);
-  adv->setScanResponseData(scanResponse);
-  adv->start();
-}
-
-void stopBLE() {
-  if (!bleServer) return;
-  bleServer->getAdvertising()->stop();
-  NimBLEDevice::deinit(true);
-  bleServer    = nullptr;
-  bleTxChar    = nullptr;
-  bleConnected = false;
-  bleRxReady   = false;
-  bleRxBuffer  = "";
-}
-// --------------------------------------
 
 // --- Tunnel reseau E/S (netio) ---
 
-// Affiche un message sur le canal physique precedent (USB ou BLE) du maitre,
+// Affiche un message sur le canal physique precedent du maitre,
 // utilise pour afficher les reponses qui arrivent de l'esclave.
 void netioDisplay(const String& msg) {
   switch (ntioPrevIoMode) {
     case IO_USB:
       Serial.println(msg);
       break;
-    case IO_BLUETOOTH:
-      if (bleConnected && bleTxChar) {
-        String line = msg + "\n";
-        bleTxChar->setValue(line.c_str());
-        bleTxChar->notify();
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
   }
 }
 
-// Ferme le tunnel reseau E/S et restaure l'etat precedent des deux cotes.
+// Ferme le tunnel reseau E/S et restaure l'etat precedent.
 void closeNetioTunnel() {
   netioMaster       = false;
-  netioSlave        = false;
   ioMode            = ntioPrevIoMode;
 
   netioRemote       = -1;
@@ -305,23 +228,8 @@ void ioOutput(const String& msg) {
     case IO_USB:
       Serial.println(msg);
       break;
-    case IO_BLUETOOTH:
-      if (bleConnected && bleTxChar) {
-        String line = msg + "\n";
-        bleTxChar->setValue(line.c_str());
-        bleTxChar->notify();
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
     case IO_NETIO:
-      if (netioSlave && netioRemote >= 0) {
-        // Esclave : transmet la sortie au maitre via le reseau maille (send)
-        String rsp = "send:";
-        rsp += netioRemote;
-        rsp += ":ntirsp:";
-        rsp += msg;
-        interpreter(rsp);
-        netioLastActivity = millis();
-      }
       // Maitre : supprime sa propre sortie - seules les reponses de l'esclave sont affichees
       break;
   }
@@ -334,15 +242,7 @@ void handleSerialInput() {
     case IO_USB:
       if (Serial.available() > 0) { String _s = Serial.readString(); _s.trim(); interpreter(_s); delay(100); }
       break;
-    case IO_BLUETOOTH:
-      if (bleRxReady) {
-        bleRxReady = false;
-        String cmd = bleRxBuffer;
-        bleRxBuffer = "";
-        interpreter(cmd);
-        delay(100);
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
     case IO_NETIO:
       if (netioMaster) {
         // Le maitre lit depuis son canal physique precedent et transmet a l'esclave
@@ -350,14 +250,8 @@ void handleSerialInput() {
         bool hasInput = false;
         if (ntioPrevIoMode == IO_USB) {
           if (Serial.available() > 0) { inputCmd = Serial.readString(); hasInput = true; }
-        } else if (ntioPrevIoMode == IO_BLUETOOTH) {
-          if (bleRxReady) {
-            bleRxReady = false;
-            inputCmd = bleRxBuffer;
-            bleRxBuffer = "";
-            hasInput = true;
-          }
         }
+        // Pour ajouter un canal, ajouter un else if ici.
         if (hasInput) {
           inputCmd.trim();
           if (inputCmd.length() > 0) {
@@ -375,7 +269,6 @@ void handleSerialInput() {
           }
         }
       }
-      // L'esclave ne lit pas d'entree locale : ses commandes arrivent via ntidata reseau
       break;
   }
 }
@@ -1596,7 +1489,7 @@ void readsd(bool allrecover){
       stationgateway = getValue(sdtopar, ':', 4).toInt();
       TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 5).toInt() * 1000L;
       { int sl = getValue(sdtopar, ':', 6).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(sdtopar, ':', 7).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
+      { int im = getValue(sdtopar, ':', 7).toInt(); if(im == IO_USB) ioMode = im; }
       { long nt = getValue(sdtopar, ':', 10).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft = getValue(sdtopar, ':', 11).toInt(); if(ft > 0) filetimeout = ft; }
       { int fxt = getValue(sdtopar, ':', 12).toInt(); if(fxt > 0) filetxtimeout = fxt; }
@@ -2213,7 +2106,6 @@ void setup() {
     MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree
   }
 
-  if (ioMode == IO_BLUETOOTH) startBLE();
 
   logN("[OK] Noeud #" + String(localAddress) + " demarre - firmware " + FIRMWARE_VERSION);
 
@@ -2264,7 +2156,7 @@ void loop() {
 
   // --- Timeout du tunnel reseau E/S ---
   // Si aucun echange ne transite pendant NETIO_TIMEOUT ms, on ferme le tunnel proprement.
-  if ((netioMaster || netioSlave) && netioLastActivity > 0 &&
+  if (netioMaster && netioLastActivity > 0 &&
       (millis() - netioLastActivity > (unsigned long)NETIO_TIMEOUT)) {
     int  savedRemote = netioRemote;
     bool wasMaster   = netioMaster;
@@ -2739,7 +2631,7 @@ void interpreter(String msg){
       stationgateway         = getValue(msg,':',5).toInt();
       TOGATE_COMMAND_TIMEOUT = getValue(msg,':',6).toInt() * 1000L;
       { int sl = getValue(msg,':',7).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(msg,':',10).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
+      { int im = getValue(msg,':',10).toInt(); if(im == IO_USB) ioMode = im; }
       { long nt = getValue(msg,':',11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
       { int ft  = getValue(msg,':',12).toInt(); if(ft  > 0) filetimeout  = ft; }
       { int fxt = getValue(msg,':',13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
@@ -3041,26 +2933,17 @@ void interpreter(String msg){
       // En mode esclave netio, le niveau est contraint a [1, 2] :
       // 0 (silencieux) priverait le maitre de toute sortie,
       // 3 (debug) inonderait le tunnel de messages internes.
-      if(netioSlave) serialLevel = constrain(serialLevel, LOG_NORMAL, LOG_VERBOSE);
       ioOutput("[CONFIG] Niveau de log regle sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
     if(cmd == "iomd"){
       String arg = getValue(msg, ':', 1);
       if(arg == "usb"){
-        if(ioMode == IO_BLUETOOTH) stopBLE();
         ioMode = IO_USB;
         ioOutput("[IO] Mode USB active");
         writetosd();
-      } else if(arg == "bt"){
-        if(ioMode != IO_BLUETOOTH){
-          ioMode = IO_BLUETOOTH;
-          startBLE();
-          writetosd();
-        }
-        ioOutput("[IO] Mode Bluetooth active - appareil: Mycromesh-" + String(localAddress));
       } else {
-        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt  (netio:<addr> pour le tunnel reseau)");
+        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  (netio:<addr> pour le tunnel reseau)");
       }
     }
     if(cmd == "cout"){
@@ -3350,7 +3233,7 @@ void interpreter(String msg){
       int slaveAddr = getValue(msg, ':', 1).toInt();
       if (slaveAddr <= 0) {
         ioOutput("[NETIO] Erreur : adresse esclave invalide");
-      } else if (netioMaster || netioSlave) {
+      } else if (netioMaster) {
         ioOutput("[NETIO] Un tunnel reseau est deja actif");
       } else {
         ioOutput("[NETIO] Ouverture du tunnel vers le noeud #" + String(slaveAddr) + "...");
@@ -3365,39 +3248,12 @@ void interpreter(String msg){
       }
     }
 
-    // Recu par l'esclave : le maitre demande l'ouverture du tunnel
-    // Format : ntiopen:<master_addr>
-    if (cmd == "ntiopen") {
-      int masterAddr = getValue(msg, ':', 1).toInt();
-      if (!netioMaster && !netioSlave && masterAddr > 0) {
-        ntioPrevIoMode    = ioMode;
-        netioRemote       = masterAddr;
-        netioLastActivity = millis();
-        logN("[NETIO] Mode esclave active - maitre : noeud #" + String(masterAddr));
-        // Confirmer au maitre via trsp (fiable) avant de basculer le mode
-        interpreter("trsp:" + String(masterAddr) + ":ntiok");
-        // Basculer en mode esclave
-        netioSlave = true;
-        ioMode     = IO_NETIO;
-      }
-    }
-
     // Recu par le maitre : l'esclave confirme que le tunnel est etabli
     // Format : ntiok
     if (cmd == "ntiok") {
       if (netioMaster && netioRemote >= 0) {
         netioLastActivity = millis();
         netioDisplay("[NETIO] Tunnel ouvert avec le noeud #" + String(netioRemote) + " - tapez 'exit' pour fermer");
-      }
-    }
-
-    // Recu par l'esclave : commande a executer localement, envoyee par le maitre
-    // Format : ntidata:<commande>
-    if (cmd == "ntidata") {
-      if (netioSlave) {
-        netioLastActivity = millis();
-        String subcmd = msg.substring(8); // retire le prefixe "ntidata:"
-        interpreter(subcmd);
       }
     }
 
@@ -3413,7 +3269,7 @@ void interpreter(String msg){
     // Recu par l'un ou l'autre : fermeture du tunnel (depuis timeout ou commande distante)
     // Format : nticlose
     if (cmd == "nticlose") {
-      if (netioMaster || netioSlave) {
+      if (netioMaster) {
         closeNetioTunnel();
         ioOutput("[NETIO] Tunnel reseau ferme");
       }
