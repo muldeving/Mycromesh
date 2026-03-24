@@ -1,23 +1,13 @@
 #include "LiteLora.h"
 #include <limits.h>
 #include <ESP32Time.h>
-#include "esp_sleep.h"
+
 #include "driver/gpio.h"
 #include <SD.h>
 #include <time.h>
-#include "Adafruit_BME680.h"
 #include <Preferences.h>
 #include <Update.h>
 #include <Wire.h>
-#include <Adafruit_BMP280.h>
-#include <Adafruit_AHT10.h>
-#include <NimBLEDevice.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
-
-Adafruit_BMP280 bmp;
-Adafruit_AHT10 aht;
-
 Preferences prefs;
 
 ESP32Time rtc;
@@ -26,7 +16,7 @@ LiteLora lora;
 
 const String FIRMWARE_VERSION = "1.4.0";
 
-#define uS_TO_S_FACTOR 1000000
+
 
 #define PACKET_SIZE 180
 #define GROUP_K 32
@@ -36,61 +26,50 @@ const String FIRMWARE_VERSION = "1.4.0";
 #define UPDATE_FILE "/update/firmware.bin"
 #define BUF_SIZE 4096
 
-#define CPU_FREQ_IDLE   20
-#define CPU_FREQ_BLE    80   // fréquence minimale requise par le stack BLE sur ESP32-C3
-#define CPU_FREQ_TURBO  160
 
 static uint8_t gf_exp[512];
 static uint8_t gf_log_tbl[256];
 
-Adafruit_BME680 bme;
-
-const int oneWireBus = 3; 
-OneWire oneWire(oneWireBus);
-DallasTemperature sensors(&oneWire);
 // Variable Cron
 
 String crontabString;
 
 // Variable de parametres
 
-long MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée — stocké en ms, p.cfg en secondes
-long starttimeout = 15000;      // Durée timout procudure start — stocké en ms, p.cfg en secondes
+long MAX_PING_AGE = 20000;      // Duree maximale (en millisecondes) avant traitement d'une entree - stocke en ms, p.cfg en secondes
 int localAddress = 61;          // address of this device
-long DELAY = 3600000;           // Délai en millisecondes — stocké en ms, p.cfg en secondes
-long MAX_ENTRY_AGE = 20000;     // Durée maximale (en millisecondes) avant traitement d'une entrée — stocké en ms, p.cfg en secondes
-long actiontimerdel = 30;
-bool maintmode = true;
+long DELAY = 3600000;           // Delai en millisecondes - stocke en ms, p.cfg en secondes
+long MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree - stocke en ms, p.cfg en secondes
+
 int stationgateway = 1;
-long TOGATE_COMMAND_TIMEOUT = 60000;  // stocké en ms, p.cfg en secondes
-long NETIO_TIMEOUT     = 300000;      // ms sans activité avant fermeture automatique du tunnel — stocké en ms, p.cfg en secondes
+long TOGATE_COMMAND_TIMEOUT = 60000;  // stocke en ms, p.cfg en secondes
+long NETIO_TIMEOUT     = 300000;      // ms sans activite avant fermeture automatique du tunnel - stocke en ms, p.cfg en secondes
 int filetimeout = 300;
 int filetxtimeout = 60;
 
-// Niveaux de sortie série : 0=rien, 1=normal, 2=verbose, 3=debug
+// Niveaux de sortie serie : 0=rien, 1=normal, 2=verbose, 3=debug
 #define LOG_NONE    0
 #define LOG_NORMAL  1
 #define LOG_VERBOSE 2
 #define LOG_DEBUG   3
 int serialLevel = 1;
 
-// Mode E/S : sélectionne le canal actif pour ioOutput / handleSerialInput
+// Mode E/S : selectionne le canal actif pour ioOutput / handleSerialInput
 #define IO_USB       0
-#define IO_BLUETOOTH 1
-#define IO_NETIO     2   // tunnel réseau : entrée/sortie via une autre station du maillage
+// IO_BLUETOOTH = 1 (reserve pour ajout futur)
+#define IO_NETIO     2   // tunnel reseau : entree/sortie via une autre station du maillage
 int ioMode = IO_USB;
 
-// Variables du tunnel réseau E/S (mode IO_NETIO)
-bool          netioMaster       = false;   // cette station est le maître du tunnel
-bool          netioSlave        = false;   // cette station est l'esclave du tunnel
+// Variables du tunnel reseau E/S (mode IO_NETIO)
+bool          netioMaster       = false;   // cette station est le maitre du tunnel
 int           netioRemote       = -1;      // adresse de la station distante
-unsigned long netioLastActivity = 0;       // horodatage de la dernière activité (millis)
-int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegardé avant activation du tunnel
-bool          ntioPrevMaintMode = true;    // état maintmode sauvegardé avant activation du tunnel
+unsigned long netioLastActivity = 0;       // horodatage de la derniere activite (millis)
+int           ntioPrevIoMode    = IO_USB;  // mode E/S sauvegarde avant activation du tunnel
 
-// variables d'état
 
-int startstat = 0;
+// variables d'etat
+
+
 byte msgCount = 0;            // count of outgoing messages
 
 // variables d'environnement
@@ -98,14 +77,15 @@ byte msgCount = 0;            // count of outgoing messages
 const int TAILLE_TAMPON = 256;
 const int MAX_EDGES = 300;      // nombre max de liaisons
 const int MAX_VERTICES = 60;    // nombre max de stations
-const int MAX_ENTRIES = 10;     // Nombre maximum d'entrées
-const int MAX_PINGS = 10;       // Nombre maximum d'entrées
+const int MAX_ENTRIES = 10;     // Nombre maximum d'entrees
+const int MAX_PINGS = 10;       // Nombre maximum d'entrees
 const int MAX_SIZE = 10;        // Taille maximale du tableau de stockage
 const int MAX_TOGATE_COMMANDS = 10;
 const int MAX_TOGATE_COMMANDS_FILE = 20;
 
-const int csPin = 21;          // LoRa radio chip select
-const int irqPin = 8;          // change for your board; must be a hardware interrupt pin
+const int csPin = 15;          // LoRa radio chip select (io15)
+const int irqPin = 4;          // LoRa DIO0 interrupt pin (io4)
+const int busMuxPin = 17;      // LoRa/SD bus mux control (io17)
 
 // variables systeme
 
@@ -118,28 +98,17 @@ int filedelai;
 int filesender = -1;
 int filereceivientstation = -1;
 unsigned long ltgdel = 0;
-bool sensorstart = false;
-bool sensor_bme680 = false;
-bool sensor_aht20 = false;
-bool sensor_bmp280 = false;
-bool sensor_ds18b20 = false;
 int lastMinuteChecked = -1;
-int rtmapdel = 0, fpingdel = 0;
-unsigned long starttime;
-int starttry = 0;
-int nearestforstart;
 unsigned long timegeth = 0;
-int pingCount = 0; // Nombre actuel d'entrées dans la liste
-int dataCount = 0;        // Compteur de valeurs stockées
-unsigned long lastAddTime = 0; // Temps de la dernière addition
+int pingCount = 0; // Nombre actuel d'entrees dans la liste
+int dataCount = 0;        // Compteur de valeurs stockees
+unsigned long lastAddTime = 0; // Temps de la derniere addition
 int sender;
 int pingphase = 0;
 unsigned long tmps = 0;
 int numEdges = 0;
 int numVertices = 0;
-unsigned long actiontimer = 0;
-unsigned long sleeptimer = 0;
-int stationstat = 0;
+
 const int MAX_COMMANDS = 10;
 int nbtogatefail = 0;
 unsigned long ltgdelfile = 0;
@@ -156,15 +125,15 @@ int resend1 = 0;
 int resend2 = 0;
 int txcnt = 0;
 
-// Variables diffusion réseau (broadcast fichier)
-bool broadcastMode = false;         // Station en mode réception diffusion
-bool broadcastEmitter = false;      // Cette station est l'émettrice
+// Variables diffusion reseau (broadcast fichier)
+bool broadcastMode = false;         // Station en mode reception diffusion
+bool broadcastEmitter = false;      // Cette station est l'emettrice
 String broadcastPath = "";          // Chemin du fichier en cours de diffusion
-unsigned long lastBroadcastRecv = 0;// Horodatage dernière activité (secondes)
-int lastBrdfSeq = -1;              // Dernier numéro de séquence brdf traité
-bool broadcastFileSending = false;  // Émettrice : envoi de lignes en cours
+unsigned long lastBroadcastRecv = 0;// Horodatage derniere activite (secondes)
+int lastBrdfSeq = -1;              // Dernier numero de sequence brdf traite
+bool broadcastFileSending = false;  // Emettrice : envoi de lignes en cours
 unsigned long lastBrdfSendMs = 0;  // Dernier envoi brdf (millis)
-int brdfSeqCounter = 0;            // Compteur de séquence brdf
+int brdfSeqCounter = 0;            // Compteur de sequence brdf
 
 // Tableaux
 
@@ -193,7 +162,7 @@ struct TogateCommandFile {
 TogateCommandFile togateQueueFile[MAX_TOGATE_COMMANDS_FILE];
 
 struct Data {
-  String value;        // La valeur de type String stockée
+  String value;        // La valeur de type String stockee
   unsigned long time;  // Le temps d'enregistrement de la valeur
 };
 
@@ -217,7 +186,7 @@ struct Entry {
   String msgtosend;
 };
 Entry entryList[MAX_ENTRIES];
-int entryCount = 0; // Nombre actuel d'entrées dans la liste
+int entryCount = 0; // Nombre actuel d'entrees dans la liste
 
 
 struct PingEntry {
@@ -228,99 +197,25 @@ struct PingEntry {
 PingEntry pingList[MAX_PINGS];
 
 
-// --- BLE UART (Nordic UART Service) ---
-#define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-NimBLEServer*         bleServer    = nullptr;
-NimBLECharacteristic* bleTxChar    = nullptr;
-bool               bleConnected = false;
-String             bleRxBuffer  = "";
-bool               bleRxReady   = false;
+// --- Tunnel reseau E/S (netio) ---
 
-class BLEServerCB : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer*, NimBLEConnInfo&)    override { bleConnected = true;  }
-  void onDisconnect(NimBLEServer* s, NimBLEConnInfo&, int) override {
-    bleConnected = false;
-    s->startAdvertising(); // relance la publicité pour permettre une reconnexion
-  }
-};
-
-class BLERxCB : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
-    bleRxBuffer = c->getValue().c_str();
-    bleRxReady  = true;
-  }
-};
-
-void startBLE() {
-  cpuTurbo();
-  if (bleServer) return; // déjà démarré
-  NimBLEDevice::init(("Mycromesh-" + String(localAddress)).c_str());
-  bleServer = NimBLEDevice::createServer();
-  bleServer->setCallbacks(new BLEServerCB());
-
-  NimBLEService* svc = bleServer->createService(BLE_SERVICE_UUID);
-
-  bleTxChar = svc->createCharacteristic(BLE_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
-  // NimBLE gère automatiquement le descripteur CCCD (BLE2902), pas besoin de l'ajouter manuellement
-
-  NimBLECharacteristic* rxChar = svc->createCharacteristic(BLE_RX_UUID, NIMBLE_PROPERTY::WRITE);
-  rxChar->setCallbacks(new BLERxCB());
-
-  svc->start();
-
-  // Configure l'advertising : UUID du service NUS dans le paquet principal,
-  // nom du périphérique dans la scan response séparée.
-  // Le nom ne peut pas être dans le paquet principal : flags(3) + UUID128(18) + nom(14) = 35 > 31 octets.
-  // enableScanResponse(true) seul ne suffit pas en NimBLE v2.x — il faut passer les données explicitement.
-  NimBLEAdvertisementData scanResponse;
-  scanResponse.setName(("Mycromesh-" + String(localAddress)).c_str());
-
-  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(BLE_SERVICE_UUID);
-  adv->setScanResponseData(scanResponse);
-  adv->start();
-}
-
-void stopBLE() {
-  if (!bleServer) return;
-  bleServer->getAdvertising()->stop();
-  NimBLEDevice::deinit(true);
-  bleServer    = nullptr;
-  bleTxChar    = nullptr;
-  bleConnected = false;
-  bleRxReady   = false;
-  bleRxBuffer  = "";
-}
-// --------------------------------------
-
-// --- Tunnel réseau E/S (netio) ---
-
-// Affiche un message sur le canal physique précédent (USB ou BLE) du maître,
-// utilisé pour afficher les réponses qui arrivent de l'esclave.
+// Affiche un message sur le canal physique precedent du maitre,
+// utilise pour afficher les reponses qui arrivent de l'esclave.
 void netioDisplay(const String& msg) {
   switch (ntioPrevIoMode) {
     case IO_USB:
       Serial.println(msg);
       break;
-    case IO_BLUETOOTH:
-      if (bleConnected && bleTxChar) {
-        String line = msg + "\n";
-        bleTxChar->setValue(line.c_str());
-        bleTxChar->notify();
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
   }
 }
 
-// Ferme le tunnel réseau E/S et restaure l'état précédent des deux côtés.
+// Ferme le tunnel reseau E/S et restaure l'etat precedent.
 void closeNetioTunnel() {
   netioMaster       = false;
-  netioSlave        = false;
   ioMode            = ntioPrevIoMode;
-  maintmode         = ntioPrevMaintMode;
+
   netioRemote       = -1;
   netioLastActivity = 0;
 }
@@ -328,83 +223,53 @@ void closeNetioTunnel() {
 
 // --- Couche d'abstraction E/S ---
 // Centralise toutes les sorties texte du firmware.
-// Pour ajouter un canal, incrémenter IO_* et ajouter un case ici.
+// Pour ajouter un canal, incrementer IO_* et ajouter un case ici.
 void ioOutput(const String& msg) {
   switch (ioMode) {
     case IO_USB:
       Serial.println(msg);
       break;
-    case IO_BLUETOOTH:
-      if (bleConnected && bleTxChar) {
-        String line = msg + "\n";
-        bleTxChar->setValue(line.c_str());
-        bleTxChar->notify();
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
     case IO_NETIO:
-      if (netioSlave && netioRemote >= 0) {
-        // Esclave : transmet la sortie au maître via le réseau maillé (send)
-        String rsp = "send:";
-        rsp += netioRemote;
-        rsp += ":ntirsp:";
-        rsp += msg;
-        interpreter(rsp);
-        netioLastActivity = millis();
-      }
-      // Maître : supprime sa propre sortie — seules les réponses de l'esclave sont affichées
+      // Maitre : supprime sa propre sortie - seules les reponses de l'esclave sont affichees
       break;
   }
 }
 
-// Lit l'entrée du canal actif et envoie la commande à l'interpréteur.
+// Lit l'entree du canal actif et envoie la commande a l'interpreteur.
 // Pour ajouter un canal, ajouter un case ici.
 void handleSerialInput() {
   switch (ioMode) {
     case IO_USB:
       if (Serial.available() > 0) { String _s = Serial.readString(); _s.trim(); interpreter(_s); delay(100); }
       break;
-    case IO_BLUETOOTH:
-      if (bleRxReady) {
-        bleRxReady = false;
-        String cmd = bleRxBuffer;
-        bleRxBuffer = "";
-        interpreter(cmd);
-        delay(100);
-      }
-      break;
+    // Pour ajouter un canal, ajouter un case ici.
     case IO_NETIO:
       if (netioMaster) {
-        // Le maître lit depuis son canal physique précédent et transmet à l'esclave
+        // Le maitre lit depuis son canal physique precedent et transmet a l'esclave
         String inputCmd = "";
         bool hasInput = false;
         if (ntioPrevIoMode == IO_USB) {
           if (Serial.available() > 0) { inputCmd = Serial.readString(); hasInput = true; }
-        } else if (ntioPrevIoMode == IO_BLUETOOTH) {
-          if (bleRxReady) {
-            bleRxReady = false;
-            inputCmd = bleRxBuffer;
-            bleRxBuffer = "";
-            hasInput = true;
-          }
         }
+        // Pour ajouter un canal, ajouter un else if ici.
         if (hasInput) {
           inputCmd.trim();
           if (inputCmd.length() > 0) {
             if (inputCmd == "exit") {
-              // Fermeture propre du tunnel : signaler l'esclave puis restaurer l'état
+              // Fermeture propre du tunnel : signaler l'esclave puis restaurer l'etat
               int savedRemote = netioRemote;
               closeNetioTunnel();
               interpreter("trsp:" + String(savedRemote) + ":nticlose");
-              ioOutput("[NETIO] Tunnel fermé proprement");
+              ioOutput("[NETIO] Tunnel ferme proprement");
             } else {
-              // Transmettre la commande à l'esclave via le réseau maillé (send)
+              // Transmettre la commande a l'esclave via le reseau maille (send)
               netioLastActivity = millis();
               interpreter("send:" + String(netioRemote) + ":ntidata:" + inputCmd);
             }
           }
         }
       }
-      // L'esclave ne lit pas d'entrée locale : ses commandes arrivent via ntidata réseau
       break;
   }
 }
@@ -416,19 +281,19 @@ void logD(const String& msg) { if(serialLevel >= LOG_DEBUG)   ioOutput(msg); }
 
 void loraToSD() {
     lora.releaseBus();
-    digitalWrite(20, 0);
+    digitalWrite(busMuxPin, 0);
     delay(100);
-    if (!SD.begin(7)) { logN("[ERREUR] Carte SD introuvable ou non initialisée"); }
+    if (!SD.begin(16)) { logN("[ERREUR] Carte SD introuvable ou non initialisee"); }
 }
 
 void sdToLora() {
-    digitalWrite(20, 1);
+    digitalWrite(busMuxPin, 1);
     lora.acquireBus();
 }
 
 bool togateAddCommand(int id, String command) {
   if (togateCount >= MAX_TOGATE_COMMANDS) {
-    logN("[ERREUR] File de commandes gateway pleine, commande ignorée");
+    logN("[ERREUR] File de commandes gateway pleine, commande ignoree");
     return false;
   }
 
@@ -462,12 +327,12 @@ void togatePurgeOld() {
         myFile.close();
       }
       else{
-        logN("[ERREUR SD] Impossible d'écrire dans /togate.cache");
+        logN("[ERREUR SD] Impossible d'ecrire dans /togate.cache");
       }
 
       sdToLora();
 
-      // Supprimer cette entrée en décalant les suivantes
+      // Supprimer cette entree en decalant les suivantes
       for (int j = i; j < togateCount - 1; j++) {
         togateQueue[j] = togateQueue[j + 1];
       }
@@ -487,7 +352,7 @@ bool togateRemoveById(int id) {
       prefs.putBool("isgateonline", true);
       ltgdel = (millis()/1000);
       nbtogatefail = 0;
-      // Décaler les éléments suivants
+      // Decaler les elements suivants
       for (int j = i; j < togateCount - 1; j++) {
         togateQueue[j] = togateQueue[j + 1];
       }
@@ -496,16 +361,16 @@ bool togateRemoveById(int id) {
     }
   }
 
-  logD("togate:id " + String(id) + " non trouvé");
+  logD("togate:id " + String(id) + " non trouve");
   return false;
 }
 
-// Ajouter une commande à la file d'export de fichier
+// Ajouter une commande a la file d'export de fichier
 void togateAddCommandFile(int id, String command) {
-  // Vérifier si l'ID existe déjà
+  // Verifier si l'ID existe deja
   for (int i = 0; i < togateCountFile; i++) {
     if (togateQueueFile[i].id == id) {
-      return;  // déjà présent
+      return;  // deja present
     }
   }
 
@@ -530,7 +395,7 @@ bool togateRemoveByIdFile(int id) {
       ltgdelfile = (millis()/1000);
       nbtogatefailfile = 0;
       
-      // Décaler les éléments suivants
+      // Decaler les elements suivants
       for (int j = i; j < togateCountFile - 1; j++) {
         togateQueueFile[j] = togateQueueFile[j + 1];
       }
@@ -539,11 +404,11 @@ bool togateRemoveByIdFile(int id) {
     }
   }
 
-  logD("togatef:id " + String(id) + " non trouvé");
+  logD("togatef:id " + String(id) + " non trouve");
   return false;
 }
 
-// Remettre les commandes expirées dans tx.txt
+// Remettre les commandes expirees dans tx.txt
 void purgeToOldFile() {
   unsigned long currentTime = millis();
   bool hasExpired = false;
@@ -560,17 +425,17 @@ void purgeToOldFile() {
       nbtogatefailfile++;
       hasExpired = true;
       
-      // Décaler les éléments suivants
+      // Decaler les elements suivants
       for (int j = i; j < togateCountFile - 1; j++) {
         togateQueueFile[j] = togateQueueFile[j + 1];
       }
       togateCountFile--;
-      i--; // Revérifier cet index
+      i--; // Reverifier cet index
     }
   }
   
   if (hasExpired && linesToRestore.length() > 0) {
-    // Écrire les lignes expirées dans tx.txt
+    // Ecrire les lignes expirees dans tx.txt
     delay(50);
     loraToSD();
     File myFile = SD.open("/tx.txt", FILE_APPEND);
@@ -584,7 +449,7 @@ void purgeToOldFile() {
     sdToLora();
   }
   
-  // Si trop d'échecs, marquer la gate comme hors ligne
+  // Si trop d'echecs, marquer la gate comme hors ligne
   if (nbtogatefailfile >= 3 && isfdeson == 1) {
     isfdeson = false;
     logV("ftx:gate hors ligne");
@@ -592,7 +457,7 @@ void purgeToOldFile() {
 }
 
 
-// Fonction pour ajouter une nouvelle entrée
+// Fonction pour ajouter une nouvelle entree
 void addPingEntry(int nbtoping, int nbping) {
   for (int i = 0; i < pingCount; i++) {
     if (pingList[i].nbtoping == nbtoping) { return; }
@@ -608,23 +473,23 @@ void addPingEntry(int nbtoping, int nbping) {
   }
 }
 
-// Fonction pour surveiller, mettre à jour ou supprimer les entrées trop anciennes
+// Fonction pour surveiller, mettre a jour ou supprimer les entrees trop anciennes
 void checkAndRemoveOldPingEntries() {
   unsigned long currentMillis = millis();
   for (int i = 0; i < pingCount; ) {
     if (currentMillis - pingList[i].pingTime > MAX_PING_AGE) {
       if (pingList[i].nbping < 3) {
-        // Augmenter nbping et mettre à jour pingTime
+        // Augmenter nbping et mettre a jour pingTime
         pingList[i].nbping++;
         pingList[i].pingTime = currentMillis;
         logD("ping:retry " + String(pingList[i].nbtoping) + " n=" + String(pingList[i].nbping));
-        
+
         String tempping = "trsm:";
         tempping += pingList[i].nbtoping;
         tempping += ":ping";
         scheduleCommand(300, tempping);
-        
-        i++; // Passer à l'entrée suivante
+
+        i++; // Passer a l'entree suivante
       } else {
         logD("ping:rm " + String(pingList[i].nbtoping));
         String outgoingumap = exportEdgesContainingVertex(localAddress);
@@ -634,16 +499,16 @@ void checkAndRemoveOldPingEntries() {
         for (int j = i; j < pingCount - 1; j++) {
           pingList[j] = pingList[j + 1];
         }
-        pingCount--; // Réduire le nombre d'entrées
+        pingCount--; // Reduire le nombre d'entrees
       }
       return;
     } else {
-      i++; // Passer à l'entrée suivante
+      i++; // Passer a l'entree suivante
     }
   }
 }
 
-// Fonction pour supprimer une entrée par nbtoping
+// Fonction pour supprimer une entree par nbtoping
 void removePingEntryByNbtoping(int nbtoping) {
   for (int i = 0; i < pingCount; i++) {
     if (pingList[i].nbtoping == nbtoping) {
@@ -651,13 +516,13 @@ void removePingEntryByNbtoping(int nbtoping) {
       for (int j = i; j < pingCount - 1; j++) {
         pingList[j] = pingList[j + 1];
       }
-      pingCount--; // Réduire le nombre d'entrées
+      pingCount--; // Reduire le nombre d'entrees
       return;
     }
   }
 }
 
-// Fonction pour ajouter une nouvelle entrée
+// Fonction pour ajouter une nouvelle entree
 void addEntry(const String& id, int nbtrysend, const String& msgtosend) {
   if (entryCount < MAX_ENTRIES) {
     entryList[entryCount].id = id;
@@ -671,13 +536,13 @@ void addEntry(const String& id, int nbtrysend, const String& msgtosend) {
   }
 }
 
-// Fonction pour surveiller, mettre à jour ou supprimer les entrées trop anciennes
+// Fonction pour surveiller, mettre a jour ou supprimer les entrees trop anciennes
 void checkAndRemoveOldEntries() {
   unsigned long currentMillis = millis();
   for (int i = 0; i < entryCount; ) {
     if (currentMillis - entryList[i].timesend > MAX_ENTRY_AGE) {
       if (entryList[i].nbtrysend < 3) {
-        // Augmenter nbtrysend et mettre à jour timesend
+        // Augmenter nbtrysend et mettre a jour timesend
         entryList[i].nbtrysend++;
         entryList[i].timesend = currentMillis;
         if(entryList[i].nbtrysend == 2){
@@ -688,13 +553,13 @@ void checkAndRemoveOldEntries() {
         }
         logD("entry:retry id=" + entryList[i].id + " n=" + String(entryList[i].nbtrysend));
         dijkstra(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt(), entryList[i].msgtosend);
-        i++; // Passer à l'entrée suivante
+        i++; // Passer a l'entree suivante
       } else {
         logD("entry:rm id=" + entryList[i].id);
         for (int j = i; j < entryCount - 1; j++) {
           entryList[j] = entryList[j + 1];
         }
-        entryCount--; // Réduire le nombre d'entrées
+        entryCount--; // Reduire le nombre d'entrees
         if(deststilinl(getValue(entryList[i].msgtosend, ':', 1).toInt())){
         int despingverif = nextstep(localAddress, getValue(entryList[i].msgtosend, ':', 1).toInt());
         addPingEntry(despingverif, 1);
@@ -708,7 +573,7 @@ void checkAndRemoveOldEntries() {
       return;
     }       
     else {
-      i++; // Passer à l'entrée suivante
+      i++; // Passer a l'entree suivante
     }
   }
 }
@@ -718,12 +583,12 @@ bool deststilinl(int dest){
     if (getValue(entryList[i].msgtosend, ':', 1).toInt() == dest) {
       return false;
     }
-    i++; // Passer à l'entrée suivante
+    i++; // Passer a l'entree suivante
   }
   return true;
 }
 
-// Fonction pour supprimer une entrée par ID
+// Fonction pour supprimer une entree par ID
 void removeEntryByID(const String& id) {
   for (int i = 0; i < entryCount; i++) {
     if (entryList[i].id == id) {
@@ -731,7 +596,7 @@ void removeEntryByID(const String& id) {
       for (int j = i; j < entryCount - 1; j++) {
         entryList[j] = entryList[j + 1];
       }
-      entryCount--; // Réduire le nombre d'entrées
+      entryCount--; // Reduire le nombre d'entrees
       return;
     }
   }
@@ -766,7 +631,7 @@ uint8_t gfInv(uint8_t a) {
   return gf_exp[(255 - gf_log_tbl[a]) % 255];
 }
 
-// CRC16/CCITT-FALSE — polynôme 0x1021, init 0xFFFF
+// CRC16/CCITT-FALSE - polynome 0x1021, init 0xFFFF
 uint16_t crc16(const uint8_t *data, size_t len) {
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; i++) {
@@ -848,7 +713,7 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 
 // ---------------- PARSE ----------------
 bool parseFile(String path) {
-  cpuTurbo();
+
   logD("parse:start " + path);
   delay(50);
   loraToSD();
@@ -867,7 +732,7 @@ bool parseFile(String path) {
 
   if (SD.exists("/tx.txt")) SD.remove("/tx.txt");
   File tx = SD.open("/tx.txt", FILE_WRITE);
-  if (!tx) { inF.close(); logN("[ERREUR SD] Impossible de créer /tx.txt pour l'encodage"); return false; }
+  if (!tx) { inF.close(); logN("[ERREUR SD] Impossible de creer /tx.txt pour l'encodage"); return false; }
 
   tx.printf("META:%u:%08X:%u:%u\n", totalDataPackets, fcrc, fileSize, parityGroups);
   tx.flush();
@@ -946,7 +811,7 @@ bool parseFile(String path) {
 
 // ---------------- COMPILE ----------------
 void compileFile(String fnameced, int origin, int toremof) {
-  cpuTurbo();
+
   logD("compile:start " + fnameced);
   delay(50);
   loraToSD();
@@ -955,17 +820,17 @@ void compileFile(String fnameced, int origin, int toremof) {
   if (!rx) { logN("[ERREUR SD] Impossible d'ouvrir /rx.txt pour la compilation"); return; }
 
   String meta = rx.readStringUntil('\n'); meta.trim();
-  if (!meta.startsWith("META:")) { rx.close(); logN("[ERREUR] Compilation : en-tête META manquant ou corrompu"); return; }
+  if (!meta.startsWith("META:")) { rx.close(); logN("[ERREUR] Compilation : en-tete META manquant ou corrompu"); return; }
 
   unsigned int totalDataPackets=0, fileCRC=0, expectedSize=0, parityGroups=0;
   int scanned = sscanf(meta.c_str(), "META:%u:%X:%u:%u", &totalDataPackets, &fileCRC, &expectedSize, &parityGroups);
-  if (scanned<4) { logN("[ERREUR] Compilation : impossible de lire les paramètres META"); rx.close(); return; }
+  if (scanned<4) { logN("[ERREUR] Compilation : impossible de lire les parametres META"); rx.close(); return; }
 
   if(serialLevel >= LOG_DEBUG){ char _b[64]; snprintf(_b, sizeof(_b), "compile:%u pkt %u oct CRC=%08X", totalDataPackets, expectedSize, fileCRC); ioOutput(String(_b)); }
 
   if (SD.exists(fnameced)) SD.remove(fnameced);
   File out = SD.open(fnameced, FILE_WRITE);
-  if (!out) { rx.close(); logN("[ERREUR SD] Impossible de créer le fichier de sortie de compilation"); return; }
+  if (!out) { rx.close(); logN("[ERREUR SD] Impossible de creer le fichier de sortie de compilation"); return; }
 
   uint32_t bytesWritten=0;
 
@@ -1168,7 +1033,7 @@ void compileFile(String fnameced, int origin, int toremof) {
   if(serialLevel >= LOG_DEBUG){ ioOutput("compile:CRC rejects=" + String(crcRejects)); }
 
   File outf = SD.open(fnameced, FILE_READ);
-  if (!outf) { logN("[ERREUR] Fichier compilé introuvable après écriture"); sdToLora(); return; }
+  if (!outf) { logN("[ERREUR] Fichier compile introuvable apres ecriture"); sdToLora(); return; }
   uint32_t finalCRC=crc32_file(outf);
   uint32_t finalSize=outf.size();
   SD.remove("/rx.txt");
@@ -1187,7 +1052,7 @@ void compileFile(String fnameced, int origin, int toremof) {
 
   if(serialLevel >= LOG_DEBUG){ char _b[80]; snprintf(_b, sizeof(_b), "compile:%u/%u oct CRC=%08X/%08X", finalSize, expectedSize, finalCRC, fileCRC); ioOutput(String(_b)); }
   if(finalSize == expectedSize && finalCRC == fileCRC){
-    logN("[FICHIER RX] Fichier " + fnameced + " reçu et compilé avec succès" + (origin >= 0 ? " (depuis noeud #" + String(origin) + ")" : " (diffusion réseau)"));
+    logN("[FICHIER RX] Fichier " + fnameced + " recu et compile avec succes" + (origin >= 0 ? " (depuis noeud #" + String(origin) + ")" : " (diffusion reseau)"));
     if(origin >= 0){
       String tempfeok = "send:";
       tempfeok += origin;
@@ -1200,7 +1065,7 @@ void compileFile(String fnameced, int origin, int toremof) {
       logD("compile:feok " + tempfeok);
       interpreter(tempfeok);
     }
-    // Diffusion de la réussite de compilation uniquement pour les fichiers reçus via diff
+    // Diffusion de la reussite de compilation uniquement pour les fichiers recus via diff
     if (origin == -1) {
       String bcokCmd = "bcok:";
       bcokCmd += fnameced;
@@ -1294,7 +1159,7 @@ void addOrUpdateEdge(int v1, int v2, int weight) {
     logD("edge:add " + String(v1) + "-" + String(v2) + " w=" + String(weight));
     updateVertices();
   } else if (numEdges >= MAX_EDGES) {
-    logN("[ERREUR] Table de routage pleine, nouveau lien ignoré");
+    logN("[ERREUR] Table de routage pleine, nouveau lien ignore");
   }
 }
 
@@ -1467,7 +1332,7 @@ void removeEdge(int v1, int v2) {
 
   for (int i = 0; i < numEdges; i++) {
     if ((edges[i].vertex1 == v1 && edges[i].vertex2 == v2) || (edges[i].vertex1 == v2 && edges[i].vertex2 == v1)) {
-      // Décaler les arêtes suivantes pour écraser celle à supprimer
+      // Decaler les aretes suivantes pour ecraser celle a supprimer
       for (int j = i; j < numEdges - 1; j++) {
         edges[j] = edges[j + 1];
       }
@@ -1517,13 +1382,13 @@ void removeExpiredValues() {
   for (int i = 0; i < dataCount; i++) {
     if (currentTime - dataArray[i].time >= DELAY) {
       
-      // Déplace toutes les valeurs suivantes d'une place vers l'avant
+      // Deplace toutes les valeurs suivantes d'une place vers l'avant
       for (int j = i; j < dataCount - 1; j++) {
         dataArray[j] = dataArray[j + 1];
       }
       
-      dataCount--; // Réduit le nombre de valeurs stockées
-      i--; // Pour vérifier la nouvelle valeur à cet indice
+      dataCount--; // Reduit le nombre de valeurs stockees
+      i--; // Pour verifier la nouvelle valeur a cet indice
     }
   }
 }
@@ -1540,10 +1405,10 @@ void printDataArray() {
 bool findValue(String valueToFind) {
   for (int i = 0; i < dataCount; i++) {
     if (dataArray[i].value == valueToFind) {
-      return true; // Valeur trouvée
+      return true; // Valeur trouvee
     }
   }
-  return false; // Valeur non trouvée
+  return false; // Valeur non trouvee
 }
 
 String generateid(){
@@ -1555,348 +1420,16 @@ String generateid(){
 }
 
 String formatNumber(int number, int digits) {
-  // Crée un buffer de la taille requise pour contenir les digits + le caractère de fin de chaîne '\0'
+  // Cree un buffer de la taille requise pour contenir les digits + le caractere de fin de chaine '\0'
   char buffer[digits + 1];
 
-  // Crée le format de chaîne avec des zéros devant, ex: "%04d"
+  // Cree le format de chaine avec des zeros devant, ex: "%04d"
   String format = "%0" + String(digits) + "d";
 
-  // Utilise sprintf pour formater le nombre avec des zéros devant
+  // Utilise sprintf pour formater le nombre avec des zeros devant
   sprintf(buffer, format.c_str(), number);
 
   return String(buffer);
-}
-
-void startprocedure(){
-  if(startstat == 1){
-    interpreter("pigo");
-    startstat = 2;
-    logN("[DÉMARRAGE] Lancement de la découverte réseau (ping)...");
-  }
-  if(startstat == 2 && pingphase == 0 && ((millis()/1000) - fpingdel > 30)){
-    startstat = 3;
-  }
-  if(startstat == 3){
-   nearestforstart = findNearestVertex(localAddress);
-   logV("start:3 nearest=" + String(nearestforstart));
-   if(nearestforstart == -1){
-    startstat = 9;
-    logN("[ERREUR] Démarrage échoué : aucun voisin détecté après le ping");
-    return;
-   }
-   else{
-    sendMessage(1, "gmap", nearestforstart);
-    starttime = millis() + starttimeout;
-    startstat = 4;
-    starttry = 1;
-    logN("[DÉMARRAGE] Récupération de la carte réseau auprès du noeud #" + String(nearestforstart) + "...");
-   logV("start:4 gmap->" + String(nearestforstart));
-   }
-  }
-  if(startstat == 4 && millis() >= starttime && starttry < 3){
-    sendMessage(1, "gmap", nearestforstart);
-    starttry ++;
-    starttime = millis() + starttimeout;
-    logV("start:4 retry gmap");
-  }
-  if(startstat == 4 && millis() >= starttime && starttry >= 3){
-    startstat = 3;
-    logV("start:3 map timeout, retry");
-    removeEdge(localAddress, nearestforstart);
-  }
-  if(startstat == 5 && ((millis()/1000) - rtmapdel > 40)){
-    startstat = 6;
-    logV("start:6 map ok");
-    }
-  if(startstat == 6){
-   delay(3000);
-   nearestforstart = findNearestVertex(localAddress);
-   logV("start:6 nearest=" + String(nearestforstart));
-   if(nearestforstart == -1){
-    startstat = 9;
-    logN("[ERREUR] Démarrage échoué : aucun voisin trouvé après réception de la carte réseau");
-    return;
-   }
-   else{
-    timegeth = millis();
-    sendMessage(1, "geth", nearestforstart);
-    starttime = millis() + starttimeout;
-    startstat = 7;
-    starttry = 1;
-   logN("[DÉMARRAGE] Synchronisation de l'heure avec le noeud #" + String(nearestforstart) + "...");
-   logV("start:7 geth->" + String(nearestforstart));
-   }
-  }
-  if(startstat == 7 && millis() >= starttime && starttry < 3){
-    timegeth = millis();
-    sendMessage(1, "geth", nearestforstart);
-    starttry ++;
-    starttime = millis() + starttimeout;
-    logV("start:7 retry geth");
-  }
-  if(startstat == 7 && millis() >= starttime && starttry >= 3){
-    startstat = 6;
-    logV("start:6 time timeout, retry");
-    removeEdge(localAddress, nearestforstart);
-  }
-}
-
-String exportdata(String ver){
-  if(ver == 0){
-    interpreter("gmea:0");
-  }
-  delay(50);
-  loraToSD();
-  File myFile;
-
-  myFile = SD.open("/data.ver", FILE_READ);       
-  String datastructver = "";
-  if (myFile) {
-    while (myFile.available()) {
-      datastructver += (char)myFile.read();
-    }
-    myFile.close();
-  }
-
-  String path = "/";
-  path += String(ver);
-  path += ".datadump";
-  myFile = SD.open(path, FILE_READ);       
-  String indumpe = "";
-  if (myFile) {
-    while (myFile.available()) {
-      indumpe += (char)myFile.read();
-    }
-    myFile.close();
-  }
-
-  myFile = SD.open(path, FILE_WRITE);   
-    if (myFile) {
-      myFile.print("");
-      myFile.close();
-    }
-    else{
-      logN("[ERREUR SD] Impossible d'écrire le fichier de mesures capteur");
-    }
-
-    sdToLora();
-
-  int i = 0;
-  while(getValue(datastructver, ';', i) != "") {
-    String parsver = getValue(datastructver, ';', i);
-    if(getValue(parsver, ' ', 0) == ver){
-      String tortdat = "data:";
-      tortdat += localAddress;
-      tortdat += ":";
-      tortdat += String(ver);
-      tortdat += compildata(getValue(parsver, ' ', 1), indumpe);
-      return(tortdat);
-    }
-    i ++;
-  } 
-}
-
-String compildata(String outstandstruct, String indump){
-  int i = 0;
-  String compileddata = "";
-  while(getValue(outstandstruct, ':', i) != "") {
-    compileddata += ":";
-    compileddata += extractvalue(indump, getValue(outstandstruct, ':', i));
-    i ++;
-  }
-  return(compileddata);
-}
-
-String extractvalue(String indump, String rshval){
-
-  if(rshval.substring(0, 1) == "n"){
-    float temprecoval = 0;
-    int temprecocon = 0;
-    int i = 0;
-    while(getValue(indump, ';', i) != "") {
-      String toandump = getValue(indump, ';', i);
-      if(getValue(toandump, ':', 0) == rshval){
-        temprecoval = temprecoval + getValue(toandump, ':', 1).toFloat();
-        temprecocon ++;
-      }
-      i ++;
-    }
-    return(String(temprecoval/temprecocon));
-  }
-  if(rshval.substring(0, 1) == "t"){
-    String temprecoval = "";
-    int i = 0;
-    while(getValue(indump, ';', i) != "") {
-      String toandump = getValue(indump, ';', i);
-      if(getValue(toandump, ':', 0) == rshval){
-        String tempvalrc = getValue(toandump, ':', 1);
-        if(tempvalrc.substring(tempvalrc.length()-1, tempvalrc.length()) == ";"){
-          temprecoval = tempvalrc.substring(0, tempvalrc.length()-1);
-        }
-        else{
-          temprecoval = tempvalrc;
-        }
-      }
-      i ++;
-    }
-    return(temprecoval);
-  }
-}
-
-void startsensor(){
-  if (sensor_bme680) {
-    if (!bme.begin()) { logV("sensor:BME680 err"); } else { logV("sensor:BME680 ok"); }
-    bme.setTemperatureOversampling(BME680_OS_8X);
-    bme.setHumidityOversampling(BME680_OS_2X);
-    bme.setPressureOversampling(BME680_OS_4X);
-    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-    bme.setGasHeater(320, 150);
-  }
-
-  if (sensor_aht20) {
-    if (aht.begin() != true) { logV("sensor:AHT20 err"); } else { logV("sensor:AHT20 ok"); }
-  }
-
-  if (sensor_bmp280) {
-    if (!bmp.begin()) { logV("sensor:BMP280 err"); } else { logV("sensor:BMP280 ok"); }
-    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
-                    Adafruit_BMP280::SAMPLING_X2,      /* Temp. oversampling */
-                    Adafruit_BMP280::SAMPLING_X16,     /* Pressure oversampling */
-                    Adafruit_BMP280::FILTER_X16,       /* Filtering. */
-                    Adafruit_BMP280::STANDBY_MS_500);  /* Standby time. */
-  }
-  if (sensor_ds18b20) {
-    sensors.begin();  
-    logV("sensor:DS18b20 ok");
-  }
-}
-
-void measuretodump(int ver){
-  if(sensorstart == false){
-    startsensor();
-    sensorstart = true;
-  }
-  String tosdarg = "";
-  if(ver == 0){    
-    float batt = (analogReadMilliVolts(0));
-    tosdarg += "nbatt:";
-    tosdarg += String(batt/500);
-    tosdarg += ";";
-    tosdarg += "tstartstat:";
-    tosdarg += String(startstat);
-    tosdarg += ";";
-    tosdarg += "tmaintmode:";
-    tosdarg += String(maintmode);
-    tosdarg += ";";
-    tosdarg += "trxglob:";
-    tosdarg += rxglob;
-    tosdarg += ";";
-    tosdarg += "trxbrd:";
-    tosdarg += rxbrd;
-    tosdarg += ";";
-    tosdarg += "trxloc:";
-    tosdarg += rxloc;
-    tosdarg += ";";
-    tosdarg += "tdijktx:";
-    tosdarg += dijktx;
-    tosdarg += ";";
-    tosdarg += "tdijkrx:";
-    tosdarg += dijkrx;
-    tosdarg += ";";
-    tosdarg += "tdijkhop:";
-    tosdarg += dijkhop;
-    tosdarg += ";";
-    tosdarg += "tresend1:";
-    tosdarg += resend1;
-    tosdarg += ";";
-    tosdarg += "tresend2:";
-    tosdarg += resend2;
-    tosdarg += ";";
-    tosdarg += "ttxcnt:";
-    tosdarg += txcnt;
-    tosdarg += ";";
-    tosdarg += "ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-
-    logV("sensor:v0 " + tosdarg);
-  }
-  if(ver == 1){
-    unsigned long endTime = bme.beginReading();
-    if (endTime == 0) {
-      logV("sensor:BME680 begin err");
-      return;
-    }
-
-    if (!bme.endReading()) {
-      logV("sensor:BME680 read err");
-      return;
-    }
-    tosdarg += "ntemp:";
-    tosdarg += bme.temperature;
-    tosdarg += ";";
-    tosdarg += "nhum:";
-    tosdarg += bme.humidity;
-    tosdarg += ";";
-    tosdarg += "npres:";
-    tosdarg += (bme.pressure / 100.0);
-    tosdarg += ";";
-    tosdarg += "nres:";
-    tosdarg += (bme.gas_resistance / 1000.0);
-    tosdarg += ";";
-    tosdarg += "ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-
-    logV("sensor:v1 " + tosdarg);
-  }
-
-  if(ver == 2){
-    tosdarg += "test:ok;tsp:okb;";
-    logV("sensor:v2 " + tosdarg);
-  }
-  if(ver == 3){
-  sensors_event_t humidity, temp;
-  aht.getEvent(&humidity, &temp);
-  tosdarg += "ntemp:";
-    tosdarg += temp.temperature;
-    tosdarg += ";nhum:";
-    tosdarg += humidity.relative_humidity;
-    tosdarg += ";npres:";
-    tosdarg += (bmp.readPressure());
-    tosdarg += ";ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-    logV("sensor:v3 " + tosdarg);
-  }
-  if(ver == 4){
-    sensors.requestTemperatures(); 
-    delay(50);
-    tosdarg += "ntemp:";
-    tosdarg += sensors.getTempCByIndex(0);
-    tosdarg += ";ntime:";
-    tosdarg += (rtc.getLocalEpoch());
-    tosdarg += ";";
-    logV("sensor:v4 " + tosdarg);
-  }
-
-    delay(50);
-    loraToSD();
-    File myFile;
-    String path = "/";
-    path += String(ver);
-    path += ".datadump";
-    myFile = SD.open(path, FILE_APPEND);
-    if (myFile) {
-      myFile.print(tosdarg);
-      myFile.close();
-    }
-    else{
-      logN("[ERREUR SD] Impossible d'écrire dans " + path);
-    }
-
-    sdToLora();
-
 }
 
 void readsd(bool allrecover){
@@ -1932,8 +1465,7 @@ void readsd(bool allrecover){
           myFile.close();
         }
       
-        startstat = getValue(sdtoenv, ':', 0).toInt();
-        msgCount = getValue(sdtoenv, ':', 1).toInt();
+        msgCount = getValue(sdtoenv, ':', 0).toInt();
       }
             
       myFile = SD.open("/p.cfg", FILE_READ);
@@ -1945,19 +1477,16 @@ void readsd(bool allrecover){
         myFile.close();
       }
       MAX_PING_AGE = getValue(sdtopar, ':', 0).toInt() * 1000L;
-      starttimeout = getValue(sdtopar, ':', 1).toInt() * 1000L;
-      localAddress = getValue(sdtopar, ':', 2).toInt();
-      DELAY = getValue(sdtopar, ':', 3).toInt() * 1000L;
-      MAX_ENTRY_AGE = getValue(sdtopar, ':', 4).toInt() * 1000L;
-      actiontimerdel = getValue(sdtopar, ':', 5).toInt();
-      maintmode = getValue(sdtopar, ':', 6).toInt();
-      stationgateway = getValue(sdtopar, ':', 7).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 8).toInt() * 1000L;
-      { int sl = getValue(sdtopar, ':', 9).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(sdtopar, ':', 10).toInt(); if(im >= IO_USB && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(sdtopar, ':', 11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
-      { int ft = getValue(sdtopar, ':', 12).toInt(); if(ft > 0) filetimeout = ft; }
-      { int fxt = getValue(sdtopar, ':', 13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
+      localAddress = getValue(sdtopar, ':', 1).toInt();
+      DELAY = getValue(sdtopar, ':', 2).toInt() * 1000L;
+      MAX_ENTRY_AGE = getValue(sdtopar, ':', 3).toInt() * 1000L;
+      stationgateway = getValue(sdtopar, ':', 4).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(sdtopar, ':', 5).toInt() * 1000L;
+      { int sl = getValue(sdtopar, ':', 6).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(sdtopar, ':', 7).toInt(); if(im == IO_USB) ioMode = im; }
+      { long nt = getValue(sdtopar, ':', 10).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
+      { int ft = getValue(sdtopar, ':', 11).toInt(); if(ft > 0) filetimeout = ft; }
+      { int fxt = getValue(sdtopar, ':', 12).toInt(); if(fxt > 0) filetxtimeout = fxt; }
 
       myFile = SD.open("/crontab.cfg", FILE_READ);
       String sdtocron = "";
@@ -1970,20 +1499,6 @@ void readsd(bool allrecover){
       sdtocron = getValue(sdtocron, '\n', 0);
       logD("cron:" + sdtocron);
       crontabString = sdtocron;
-
-      myFile = SD.open("/sensor.cfg", FILE_READ);
-      String sdtosensor = "";
-      if (myFile) {
-        while (myFile.available()) {
-          sdtosensor += (char)myFile.read();
-        }
-        myFile.close();
-      }
-      sensor_bme680 = getValue(sdtosensor, ':', 1).toInt() == 1;
-      sensor_aht20  = getValue(sdtosensor, ':', 3).toInt() == 1;
-      sensor_bmp280 = getValue(sdtosensor, ':', 5).toInt() == 1;
-      sensor_ds18b20 = getValue(sdtosensor, ':', 7).toInt() == 1;
-      logD("sensor cfg bme680:" + String(sensor_bme680) + " aht20:" + String(sensor_aht20) + " bmp280:" + String(sensor_bmp280) + " DS18b20:" + String(sensor_ds18b20));
 
       initGaloisField();
 
@@ -2003,13 +1518,11 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("[ERREUR SD] Impossible d'écrire /map.cfg (carte réseau)");
+      logN("[ERREUR SD] Impossible d'ecrire /map.cfg (carte reseau)");
     }
 
     String varptosd;
     varptosd += MAX_PING_AGE / 1000;
-    varptosd += ":";
-    varptosd += starttimeout / 1000;
     varptosd += ":";
     varptosd += localAddress;
     varptosd += ":";
@@ -2017,18 +1530,14 @@ void writetosd(){
     varptosd += ":";
     varptosd += MAX_ENTRY_AGE / 1000;
     varptosd += ":";
-    varptosd += actiontimerdel;
-    varptosd += ":";
-    varptosd += maintmode;
-    varptosd += ":";
     varptosd += stationgateway;
     varptosd += ":";
     varptosd += TOGATE_COMMAND_TIMEOUT / 1000;
     varptosd += ":";
     varptosd += serialLevel;
     varptosd += ":";
-    // En mode tunnel réseau (IO_NETIO), on sauvegarde le canal physique précédent
-    // pour qu'au redémarrage la station revienne dans son mode normal (USB ou BT).
+    // En mode tunnel reseau (IO_NETIO), on sauvegarde le canal physique precedent
+    // pour qu'au redemarrage la station revienne dans son mode normal (USB ou BT).
     varptosd += (ioMode == IO_NETIO ? ntioPrevIoMode : ioMode);
     varptosd += ":";
     varptosd += NETIO_TIMEOUT / 1000;
@@ -2044,7 +1553,7 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("[ERREUR SD] Impossible d'écrire /p.cfg (paramètres)");
+      logN("[ERREUR SD] Impossible d'ecrire /p.cfg (parametres)");
     }
 
         testFile = SD.open("/crontab.cfg", FILE_WRITE);
@@ -2053,12 +1562,10 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("[ERREUR SD] Impossible d'écrire /crontab.cfg");
+      logN("[ERREUR SD] Impossible d'ecrire /crontab.cfg");
     }
 
     String varetosd;
-    varetosd += startstat;
-    varetosd += ":";
     varetosd += msgCount;
     varetosd += ":";
 
@@ -2068,31 +1575,10 @@ void writetosd(){
       testFile.close();
     }
     else{
-      logN("[ERREUR SD] Impossible d'écrire /e.cfg (état)");
+      logN("[ERREUR SD] Impossible d'ecrire /e.cfg (etat)");
     }
 
-    writeSensorCfg();
-
     sdToLora();
-}
-
-void writeSensorCfg(){
-  String varstosd = "bme680:";
-  varstosd += sensor_bme680 ? "1" : "0";
-  varstosd += ":aht20:";
-  varstosd += sensor_aht20  ? "1" : "0";
-  varstosd += ":bmp280:";
-  varstosd += sensor_bmp280 ? "1" : "0";
-  varstosd += ":ds18b20:";
-  varstosd += sensor_ds18b20 ? "1" : "0";
-
-  File sensorFile = SD.open("/sensor.cfg", FILE_WRITE);
-  if (sensorFile) {
-    sensorFile.println(varstosd);
-    sensorFile.close();
-  } else {
-    logN("[ERREUR SD] Impossible d'écrire /sensor.cfg");
-  }
 }
 
 bool exportcache() {
@@ -2155,15 +1641,15 @@ bool exportcache() {
 }
 
 // ---------------- BROADCAST EXPORT LINE ----------------
-// Lit une ligne de tx.txt et la diffuse en brdf:SEQ:LINE vers le réseau (dest=0)
-// Appelée périodiquement depuis loop() tant que broadcastEmitter && broadcastFileSending
+// Lit une ligne de tx.txt et la diffuse en brdf:SEQ:LINE vers le reseau (dest=0)
+// Appelee periodiquement depuis loop() tant que broadcastEmitter && broadcastFileSending
 void broadcastExportLine() {
   delay(50);
   loraToSD();
 
   File fichier = SD.open("/tx.txt", FILE_READ);
   if (!fichier) {
-    logN("[ERREUR] Diffusion réseau interrompue : /tx.txt introuvable");
+    logN("[ERREUR] Diffusion reseau interrompue : /tx.txt introuvable");
     sdToLora();
     broadcastFileSending = false;
     broadcastMode = false;
@@ -2184,8 +1670,8 @@ void broadcastExportLine() {
     brde += tempid;
     brde += ":";
     brde += broadcastPath;
-    addValue(tempid);  // Éviter de retraiter notre propre brde
-    sendMessage(0, brde, 0);  // Pas de réveil
+    addValue(tempid);  // Eviter de retraiter notre propre brde
+    sendMessage(0, brde, 0);  // Pas de reveil
     broadcastFileSending = false;
     broadcastMode = false;
     broadcastEmitter = false;
@@ -2225,9 +1711,9 @@ void broadcastExportLine() {
       brdf += String(brdfSeqCounter);
       brdf += ":";
       brdf += ligneStr;
-      lastBrdfSeq = brdfSeqCounter;  // Marquer comme déjà traité (ignore rétransmissions)
+      lastBrdfSeq = brdfSeqCounter;  // Marquer comme deja traite (ignore retransmissions)
       brdfSeqCounter++;
-      sendMessage(0, brdf, 0);  // Pas de réveil
+      sendMessage(0, brdf, 0);  // Pas de reveil
       logD("diff:seq=" + String(brdfSeqCounter - 1));
     }
   } else {
@@ -2265,7 +1751,7 @@ bool exportfile() {
     tempfend += ":";
     tempfend += remof;
     interpreter(tempfend);
-    logN("[FICHIER TX] Transfert de " + ftfpath + " terminé, attente de confirmation du noeud #" + String(filereceivientstation) + "...");
+    logN("[FICHIER TX] Transfert de " + ftfpath + " termine, attente de confirmation du noeud #" + String(filereceivientstation) + "...");
     filereceivientstation = -1;
     isfdeson = false;
     return false;
@@ -2303,13 +1789,13 @@ bool exportfile() {
     if (ligneStr.length() > 0) {
       logD("ftx:ligne " + ligneStr);
       
-      // Extraire l'ID de la commande (format identique à exportcache)
+      // Extraire l'ID de la commande (format identique a exportcache)
       String tempid = generateid();
       togateAddCommandFile(tempid.toInt(), ligneStr);
 
       String outglignestr = "file:";
       outglignestr += ligneStr;
-      // Passer la ligne à l'interpréteur      
+      // Passer la ligne a l'interpreteur      
       String load = "send:";
       load += filereceivientstation;
       load += ":load:";
@@ -2339,7 +1825,7 @@ void importfile(String file, String input){
     myFile.close();
   }
   else{
-    logN("[ERREUR SD] Écriture impossible dans " + file);
+    logN("[ERREUR SD] Ecriture impossible dans " + file);
   }
   sdToLora();
 }
@@ -2468,7 +1954,7 @@ void lssd(String path){
   File dir = SD.open(path);
   if(!dir || !dir.isDirectory()){
     if(dir) dir.close();
-    logN("[SD] Répertoire " + path + " introuvable ou invalide");
+    logN("[SD] Repertoire " + path + " introuvable ou invalide");
     sdToLora();
     delay(200);
     return;
@@ -2519,21 +2005,21 @@ bool doFirmwareUpdate() {
   loraToSD();
   File updateFile = SD.open(UPDATE_FILE);
   if (!updateFile) {
-    logN("[ERREUR MÀJU] Fichier firmware introuvable sur la carte SD");
+    logN("[ERREUR MAJU] Fichier firmware introuvable sur la carte SD");
     return false;
   }
 
   size_t updateSize = updateFile.size();
-  logN("[MISE À JOUR] Démarrage de la mise à jour, fichier de " + String(updateSize) + " octets...");
+  logN("[MISE A JOUR] Demarrage de la mise a jour, fichier de " + String(updateSize) + " octets...");
 
   if (updateSize == 0) {
-    logN("[ERREUR MÀJU] Le fichier firmware est vide");
+    logN("[ERREUR MAJU] Le fichier firmware est vide");
     updateFile.close();
     return false;
   }
 
-  if (!Update.begin(updateSize)) {  // vérifie la partition
-    logN("[ERREUR MÀJU] Impossible de démarrer la mise à jour (partition insuffisante ?)");
+  if (!Update.begin(updateSize)) {  // verifie la partition
+    logN("[ERREUR MAJU] Impossible de demarrer la mise a jour (partition insuffisante ?)");
     Update.printError(Serial);
     updateFile.close();
     return false;
@@ -2550,7 +2036,7 @@ bool doFirmwareUpdate() {
     written += w;
 
     if (w != len) {
-      logN("[ERREUR MÀJU] Écriture partielle du firmware, mise à jour annulée");
+      logN("[ERREUR MAJU] Ecriture partielle du firmware, mise a jour annulee");
       Update.printError(Serial);
       updateFile.close();
       Update.abort();
@@ -2561,17 +2047,17 @@ bool doFirmwareUpdate() {
   updateFile.close();
 
   if (!Update.end()) {
-    logN("[ERREUR MÀJU] Erreur lors de la finalisation de la mise à jour");
+    logN("[ERREUR MAJU] Erreur lors de la finalisation de la mise a jour");
     Update.printError(Serial);
     return false;
   }
 
   if (!Update.isFinished()) {
-    logN("[ERREUR MÀJU] Mise à jour incomplète, redémarrage annulé");
+    logN("[ERREUR MAJU] Mise a jour incomplete, redemarrage annule");
     return false;
   }
 
-  logN("[MISE À JOUR] Succès — " + String(written) + " octets écrits, redémarrage dans 1s...");
+  logN("[MISE A JOUR] Succes - " + String(written) + " octets ecrits, redemarrage dans 1s...");
   prefs.putBool("justrestarted", true);  // Signale qu'une diffusion de version est requise au boot
   delay(1000);
   ESP.restart();
@@ -2579,28 +2065,15 @@ bool doFirmwareUpdate() {
 }
 
 // --- CPU Frequency Scaling ---
-// idle : 20 MHz en mode USB, 80 MHz minimum en mode BLE (contrainte du stack BLE ESP32-C3)
-// turbo : 160 MHz pour les traitements intensifs (encodage RS, compilation fichier…)
-
-void cpuTurbo() {
-  setCpuFrequencyMhz(CPU_FREQ_TURBO);
-}
-
-void cpuIdle() {
-  if (ioMode == IO_BLUETOOTH || (ioMode == IO_NETIO && ntioPrevIoMode == IO_BLUETOOTH)){
-    setCpuFrequencyMhz(CPU_FREQ_BLE);
-  }
-  else{
-    setCpuFrequencyMhz(CPU_FREQ_IDLE);
-  }
-}
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   prefs.begin("mycromesh", false);
   
   clearEdges();
+
+  SPI.begin(14, 12, 13, 15); // SCK=io14, MISO=io12, MOSI=io13, SS=io15
 
   LiteLoraConfig cfg = LiteLora::defaultConfig();
   cfg.csPin = csPin;
@@ -2618,32 +2091,24 @@ void setup() {
   }
   else{
     readsd(0);
-    if(maintmode == 0){
-      startstat = 1;      
-    }
   }
 
   if (localAddress == 0){
-    MAX_PING_AGE = 20000;      // Durée maximale (en millisecondes) avant traitement d'une entrée
-    starttimeout = 15000;      // Durée timout procudure start
+    MAX_PING_AGE = 20000;
     localAddress = 61;          // address of this device
-    DELAY = 3600000;           // Délai en millisecondes (ici 5 secondes)
-    MAX_ENTRY_AGE = 20000;     // Durée maximale (en millisecondes) avant traitement d'une entrée
-    actiontimerdel = 30;
-    maintmode = true;
+    DELAY = 3600000;           // Delai en millisecondes (ici 5 secondes)
+    MAX_ENTRY_AGE = 20000;     // Duree maximale (en millisecondes) avant traitement d'une entree
   }
 
-  if (ioMode == IO_BLUETOOTH) startBLE();
 
-  logN("[OK] Noeud #" + String(localAddress) + " démarré — firmware " + FIRMWARE_VERSION);
-  actiontimer = (millis()/1000);
+  logN("[OK] Noeud #" + String(localAddress) + " demarre - firmware " + FIRMWARE_VERSION);
 
-  // Si ce démarrage fait suite à une mise à jour OTA, planifie la diffusion de la version
-  // firmware à l'ensemble du réseau 30 secondes après le boot
+  // Si ce demarrage fait suite a une mise a jour OTA, planifie la diffusion de la version
+  // firmware a l'ensemble du reseau 30 secondes apres le boot
   if (prefs.getBool("justrestarted", false)) {
     prefs.putBool("justrestarted", false);
-    scheduleCommand(30000 + (80 * localAddress), "fwver");  // 5 min + délai proportionnel au rang
-    logN("[MÀJU RÉSEAU] Post-mise à jour — diffusion de version planifiée dans 30 sec");
+    scheduleCommand(30000 + (80 * localAddress), "fwver");  // 5 min + delai proportionnel au rang
+    logN("[MAJU RESEAU] Post-mise a jour - diffusion de version planifiee dans 30 sec");
   }
 
   lora.receive();
@@ -2652,8 +2117,8 @@ void setup() {
 void loop() {
   handleSerialInput();
   if (lora.available()) { onReceive(); }
-      
-  if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){         
+
+  if(pingphase == 1 && ((millis()/1000) - tmps >= 4 || (millis()/1000) < tmps)){
     sendMessage(1, "ping", 0);
     pingphase = 2;
     logV("ping:2");
@@ -2671,13 +2136,9 @@ void loop() {
     logD("umap:" + outgoingumap);
     addValue(getValue(outgoingumap, ':', 1));
     sendMessage(1, outgoingumap, 0);
-    logN("[PING] Découverte terminée — " + String(numEdges) + " lien(s) dans la table de routage");
-    fpingdel = millis() / 1000;
+    logN("[PING] Decouverte terminee — " + String(numEdges) + " lien(s) dans la table de routage");
   }
 
-  if(startstat < 7 && startstat > 0 && maintmode == false){
-    startprocedure();
-  }
 
   if(prefs.getBool("incache", 0) == true && prefs.getBool("isgateonline", 0) == true && togateCount == 0 && ((millis()/1000) > (ltgdel + 2) || ltgdel > (millis()/1000))){
     ltgdel = (millis()/1000);
@@ -2690,7 +2151,7 @@ void loop() {
     exportfile();
   }
 
-  // --- Diffusion réseau : envoi périodique d'une ligne brdf (2s entre chaque ligne) ---
+  // --- Diffusion reseau : envoi periodique d'une ligne brdf (2s entre chaque ligne) ---
   if (broadcastEmitter && broadcastFileSending) {
     if (millis() >= lastBrdfSendMs + 2000 || millis() < lastBrdfSendMs) {
       lastBrdfSendMs = millis();
@@ -2698,7 +2159,7 @@ void loop() {
     }
   }
 
-  // --- Timeout 5 minutes en mode réception diffusion (stations réceptrices) ---
+  // --- Timeout 5 minutes en mode reception diffusion (stations receptrices) ---
   if (broadcastMode && !broadcastEmitter) {
     unsigned long nowSec = millis() / 1000;
     if ((nowSec - lastBroadcastRecv) > 300 || (nowSec < lastBroadcastRecv)) {
@@ -2708,48 +2169,26 @@ void loop() {
     }
   }
 
-  // --- Timeout du tunnel réseau E/S ---
-  // Si aucun échange ne transite pendant NETIO_TIMEOUT ms, on ferme le tunnel proprement.
-  if ((netioMaster || netioSlave) && netioLastActivity > 0 &&
+  // --- Timeout du tunnel reseau E/S ---
+  // Si aucun echange ne transite pendant NETIO_TIMEOUT ms, on ferme le tunnel proprement.
+  if (netioMaster && netioLastActivity > 0 &&
       (millis() - netioLastActivity > (unsigned long)NETIO_TIMEOUT)) {
     int  savedRemote = netioRemote;
     bool wasMaster   = netioMaster;
     closeNetioTunnel();
-    ioOutput("[NETIO] Timeout — tunnel fermé (inactivité)");
+    ioOutput("[NETIO] Timeout - tunnel ferme (inactivite)");
     // Notifier la station distante via trsp (paquet de fin fiable)
     interpreter("trsp:" + String(savedRemote) + ":nticlose");
   }
 
-  if(pingphase == 0 && filesender == -1 && filereceivientstation == -1 && !broadcastMode && (startstat == 0 || startstat == 7 || startstat == 8) && entryCount == 0 && pingCount == 0 && togateCount == 0 && ((millis()/1000) - actiontimer >= actiontimerdel || (millis()/1000) < actiontimer && togateCount == 0)){
-    if(stationstat == 0 && maintmode == false){      
-      stationstat = 1;
-      logN("[VEILLE] Aucune activité détectée, mise en veille imminente...");
-      writetosd();
-      lora.receive();
-      delay(100);
-      int nextwup = nextWakeup() - 5;
-      logN("[VEILLE] Entrée en sommeil profond — réveil dans " + String(nextwup/60) + " min (" + String(nextwup) + "s)");
-      if(nextwup > 0){        
-        esp_sleep_enable_timer_wakeup((nextWakeup() - 5) * uS_TO_S_FACTOR);
-      }
-      esp_deep_sleep_enable_gpio_wakeup(1 << 1, ESP_GPIO_WAKEUP_GPIO_HIGH);
-      gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);  // <<<=== Add this line
-      esp_deep_sleep_start();
-    }
-  }
-  else{
-    if(stationstat == 1){
-      logN("[RÉVEIL] Reprise de l'activité après la veille");
-    }
-    stationstat = 0;
-  }
+
   if (filereceivientstation > -1 && (isfdeson == 0 || infilecache == 0) && (((millis()/1000) - filetxdelai) > filetxtimeout || filetxdelai > (millis()/1000))){
     filereceivientstation = -1;
-    logN("[ERREUR] Transfert fichier échoué : le noeud destinataire ne répond plus");
+    logN("[ERREUR] Transfert fichier echoue : le noeud destinataire ne repond plus");
   }
   if (filesender > -1 && (((millis()/1000) - filedelai) > filetimeout || filedelai > (millis()/1000))){
     filesender = -1;
-    logN("[ERREUR] Réception fichier interrompue : timeout dépassé, transfert annulé");
+    logN("[ERREUR] Reception fichier interrompue : timeout depasse, transfert annule");
   }
   if(millis() >= (lastair + 15) || millis() < lastair){
     checkDelayedCommands();
@@ -2763,7 +2202,7 @@ void loop() {
   togatePurgeOld();
   purgeToOldFile();
   removeExpiredValues();
-  cpuIdle();
+
 }
 
 void scheduleCommand(unsigned long delayMs, const String& command) {
@@ -2778,7 +2217,7 @@ void scheduleCommand(unsigned long delayMs, const String& command) {
     }
   }
 
-  logN("[ERREUR] File de commandes interne pleine, commande ignorée");
+  logN("[ERREUR] File de commandes interne pleine, commande ignoree");
 }
 
 void checkDelayedCommands() {
@@ -2833,7 +2272,7 @@ void sendMessage(bool wake, String outgoing, int destination) {
   lora.receive();
   msgCount++;                           // increment message ID
   txcnt ++;
-  actiontimer = (millis()/1000);
+
   lastair = millis();
 }
 
@@ -2843,7 +2282,7 @@ void onReceive() {
   if (packetSize == 0) return;
   lora.receive();
 
-  actiontimer = (millis()/1000);
+
 
   // read packet header bytes:
   int recipient = rxBuf[0];
@@ -2913,26 +2352,26 @@ void onReceive() {
       }
    }
 
-    // --- Diffusion réussite de compilation : bcok:ID:STATION:CHEMIN ---
+    // --- Diffusion reussite de compilation : bcok:ID:STATION:CHEMIN ---
     if (getValue(incoming, ':', 0) == "bcok") {
       String bcokid = getValue(incoming, ':', 1);
       if (!findValue(bcokid)) {
         addValue(bcokid);
         logV("bcok:station " + getValue(incoming, ':', 2) + " compile ok " + getValue(incoming, ':', 3));
-        // Rétransmission sans réveil avec délai proportionnel au rang
+        // Retransmission sans reveil avec delai proportionnel au rang
         String rbcok = "trsms:0:";
         rbcok += incoming;
         scheduleCommand(20 * localAddress, rbcok);
       }
     }
 
-    // --- Diffusion de mise à jour firmware : bupd:ID ---
-    // Reçu par toutes les stations : planifie l'upgrade 60 s après réception et rétransmet
+    // --- Diffusion de mise a jour firmware : bupd:ID ---
+    // Recu par toutes les stations : planifie l'upgrade 60 s apres reception et retransmet
     if (getValue(incoming, ':', 0) == "bupd") {
       String bupdid = getValue(incoming, ':', 1);
       if (!findValue(bupdid)) {
         addValue(bupdid);
-        logN("[MÀJU RÉSEAU] Déclenchement de mise à jour reçu — upgrade dans 30 s");
+        logN("[MAJU RESEAU] Declenchement de mise a jour recu - upgrade dans 30 s");
         scheduleCommand(30000, "upgrade");
         String rbupd = "trsms:0:";
         rbupd += incoming;
@@ -2940,13 +2379,13 @@ void onReceive() {
       }
     }
 
-    // --- Diffusion de version firmware après mise à jour : fwver:ID:VERSION:STATION ---
-    // Reçu par toutes les stations après le redémarrage post-mise à jour d'une station
+    // --- Diffusion de version firmware apres mise a jour : fwver:ID:VERSION:STATION ---
+    // Recu par toutes les stations apres le redemarrage post-mise a jour d'une station
     if (getValue(incoming, ':', 0) == "fwver") {
       String fwverid = getValue(incoming, ':', 1);
       if (!findValue(fwverid)) {
         addValue(fwverid);
-        logN("[MÀJU RÉSEAU] Station #" + getValue(incoming, ':', 3) + " tourne maintenant sur le firmware " + getValue(incoming, ':', 2));
+        logN("[MAJU RESEAU] Station #" + getValue(incoming, ':', 3) + " tourne maintenant sur le firmware " + getValue(incoming, ':', 2));
         String rfwver = "trsms:0:";
         rfwver += incoming;
         scheduleCommand(20 * localAddress, rfwver);
@@ -2962,25 +2401,25 @@ void onReceive() {
           broadcastPath = getValue(incoming, ':', 2);
           lastBroadcastRecv = millis() / 1000;
           lastBrdfSeq = -1;
-          // Nettoyage rx.txt et préparation réception (via interpreter, hors ISR)
+          // Nettoyage rx.txt et preparation reception (via interpreter, hors ISR)
           scheduleCommand(10, "brdinit");
           logV("diff:rx on " + broadcastPath);
         }
-        // Rétransmission avec délai proportionnel au rang
+        // Retransmission avec delai proportionnel au rang
         String rbrdl = "trsm:0:";
         rbrdl += incoming;
         scheduleCommand(20 * localAddress, rbrdl);
       }
     }
 
-    // --- Ligne de données diffusée : brdf:SEQ:LINEDATA ---
+    // --- Ligne de donnees diffusee : brdf:SEQ:LINEDATA ---
     if (getValue(incoming, ':', 0) == "brdf") {
       if (broadcastMode && !broadcastEmitter) {
         int seq = getValue(incoming, ':', 1).toInt();
         if (seq != lastBrdfSeq) {
           lastBrdfSeq = seq;
           lastBroadcastRecv = millis() / 1000;
-          // Traitement complet (écriture SD + rétransmission) via interpreter
+          // Traitement complet (ecriture SD + retransmission) via interpreter
           scheduleCommand(5, incoming);
         }
       }
@@ -2992,11 +2431,11 @@ void onReceive() {
         String brdeid = getValue(incoming, ':', 1);
         if (!findValue(brdeid)) {
           addValue(brdeid);
-          // Rétransmission sans réveil
+          // Retransmission sans reveil
           String rbrde = "trsms:0:";
           rbrde += incoming;
           scheduleCommand(20 * localAddress, rbrde);
-          // Compilation différée (laisser les rétransmissions se propager)
+          // Compilation differee (laisser les retransmissions se propager)
           scheduleCommand(2100, incoming);
         }
       }
@@ -3044,7 +2483,7 @@ bool checkCronField(const String& field, int currentValue, int moduloBase) {
 }
 
 void executeCronTasks() {
-  if (broadcastMode) return;  // Bloquer les cronjobs pendant la diffusion réseau
+  if (broadcastMode) return;  // Bloquer les cronjobs pendant la diffusion reseau
   time_t now = rtc.getEpoch();
   struct tm timeinfo = rtc.getTimeStruct();
   if (timeinfo.tm_min == lastMinuteChecked) return;
@@ -3124,150 +2563,65 @@ bool cronFieldMatch(const String& field, int value) {
   return field.toInt() == value; 
 }
 
-int nextWakeup() {
-  time_t now = rtc.getEpoch();
-  struct tm tm_candidate;
-  struct tm tm_now = rtc.getTimeStruct(); 
-
-  for (int offset = 1; offset <= 86400; offset++) {
-    time_t candidate_time = now + offset;
-    localtime_r(&candidate_time, &tm_candidate);
-
-    if (tm_candidate.tm_sec != 0) {
-        continue; 
-    }
-
-    int mm = tm_candidate.tm_min;
-    int hh = tm_candidate.tm_hour;
-    int jj = tm_candidate.tm_mday;
-    int MM = tm_candidate.tm_mon + 1;
-    int JJ = tm_candidate.tm_wday;
-
-    int start = 0;
-    int end = crontabString.indexOf(';');
-
-    while (end != -1) {
-      String cronEntry = crontabString.substring(start, end);
-      cronEntry.trim();
-      int nextStart = end + 1;
-      end = crontabString.indexOf(';', nextStart);
-
-      int lastSpace = cronEntry.lastIndexOf(' ');
-      if (lastSpace == -1) {
-        start = nextStart;
-        continue;
-      }
-
-      String timeFields = cronEntry.substring(0, lastSpace);
-      String fields[5]; // Expect 5 fields
-      int fieldCount = 0, currentPos = 0, lastPos = 0;
-
-      while (currentPos < timeFields.length() && fieldCount < 5) {
-          if (timeFields.charAt(currentPos) == ' ') {
-              if (currentPos > lastPos) {
-                  fields[fieldCount++] = timeFields.substring(lastPos, currentPos);
-                  fields[fieldCount-1].trim();
-              } else {
-                  fieldCount = -1; break;
-              }
-              lastPos = currentPos + 1;
-          }
-          currentPos++;
-      }
-      if (fieldCount >= 0 && fieldCount < 5 && lastPos < timeFields.length()) {
-          fields[fieldCount++] = timeFields.substring(lastPos);
-          fields[fieldCount-1].trim();
-      }
-
-      if (fieldCount != 5) {
-        start = nextStart;
-        continue;
-      }
-
-      if (
-        // No seconds check
-        cronFieldMatch(fields[0], mm) &&
-        cronFieldMatch(fields[1], hh) &&
-        cronFieldMatch(fields[2], jj) &&
-        cronFieldMatch(fields[3], MM) &&
-        cronFieldMatch(fields[4], JJ)
-      ) {
-        return offset; 
-      }
-
-      start = nextStart;
-    }
-  }
-  return -1; 
-}
 
 void changepval(String parn, String parv){
   if(parn == "stationgateway"){
     stationgateway = parv.toInt();
-    logN("[CONFIG] Paramètre 'stationgateway' mis à jour : " + String(stationgateway));
+    logN("[CONFIG] Parametre 'stationgateway' mis a jour : " + String(stationgateway));
     return;
   }
   if(parn == "MAX_PING_AGE"){
     MAX_PING_AGE = parv.toInt();
-    logN("[CONFIG] Paramètre 'MAX_PING_AGE' mis à jour : " + String(MAX_PING_AGE) + " ms");
+    logN("[CONFIG] Parametre 'MAX_PING_AGE' mis a jour : " + String(MAX_PING_AGE) + " ms");
   }
-  if(parn == "starttimeout"){
-    starttimeout = parv.toInt();
-    logN("[CONFIG] Paramètre 'starttimeout' mis à jour : " + String(starttimeout) + " ms");
-  }
+
   if(parn == "localAddress"){
     localAddress = parv.toInt();
-    logN("[CONFIG] Paramètre 'localAddress' mis à jour : " + String(localAddress));
+    logN("[CONFIG] Parametre 'localAddress' mis a jour : " + String(localAddress));
   }
   if(parn == "DELAY"){
     DELAY = parv.toInt();
-    logN("[CONFIG] Paramètre 'DELAY' (déduplication) mis à jour : " + String(DELAY) + " ms");
+    logN("[CONFIG] Parametre 'DELAY' (deduplication) mis a jour : " + String(DELAY) + " ms");
   }
   if(parn == "MAX_ENTRY_AGE"){
     MAX_ENTRY_AGE = parv.toInt();
-    logN("[CONFIG] Paramètre 'MAX_ENTRY_AGE' mis à jour : " + String(MAX_ENTRY_AGE) + " ms");
+    logN("[CONFIG] Parametre 'MAX_ENTRY_AGE' mis a jour : " + String(MAX_ENTRY_AGE) + " ms");
   }
-  if(parn == "actiontimerdel"){
-    actiontimerdel = parv.toInt();
-    logN("[CONFIG] Délai d'inactivité avant veille mis à jour : " + String(actiontimerdel) + " s");
-  }
+
   if(parn == "TOGATE_COMMAND_TIMEOUT"){
     TOGATE_COMMAND_TIMEOUT = parv.toInt();
-    logN("[CONFIG] Timeout gateway mis à jour : " + String(TOGATE_COMMAND_TIMEOUT) + " ms");
+    logN("[CONFIG] Timeout gateway mis a jour : " + String(TOGATE_COMMAND_TIMEOUT) + " ms");
   }
   if(parn == "serialLevel"){
     int sl = parv.toInt();
     if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl;
-    ioOutput("[CONFIG] Niveau de log via parm réglé sur " + String(serialLevel));
+    ioOutput("[CONFIG] Niveau de log via parm regle sur " + String(serialLevel));
   }
   if(parn == "NETIO_TIMEOUT"){
     NETIO_TIMEOUT = parv.toInt();
-    logN("[CONFIG] Timeout tunnel réseau E/S mis à jour : " + String(NETIO_TIMEOUT) + " ms");
+    logN("[CONFIG] Timeout tunnel reseau E/S mis a jour : " + String(NETIO_TIMEOUT) + " ms");
   }
 }
 
 void interpreter(String msg){  
   String cmd = getValue(msg, ':', 0);
-  actiontimer = (millis()/1000);
+
 
   if(cmd == "read"){
       readsd(1);
-      logN("[OK] Carte réseau et paramètres rechargés depuis la carte SD");
+      logN("[OK] Carte reseau et parametres recharges depuis la carte SD");
   }
   if(cmd == "write"){
      writetosd();
-     logN("[OK] Configuration sauvegardée sur la carte SD");
+     logN("[OK] Configuration sauvegardee sur la carte SD");
   }
-  // ── getcfg : lit p.cfg et l'envoie sur le port actif (pour le configurateur web) ──
+  // -- getcfg : lit p.cfg et l'envoie sur le port actif (pour le configurateur web) --
   if(cmd == "getcfg"){
     String cfg;
     cfg += MAX_PING_AGE / 1000;           cfg += ":";
-    cfg += starttimeout / 1000;           cfg += ":";
     cfg += localAddress;                  cfg += ":";
     cfg += DELAY / 1000;                  cfg += ":";
     cfg += MAX_ENTRY_AGE / 1000;          cfg += ":";
-    cfg += actiontimerdel;                cfg += ":";
-    cfg += maintmode;                     cfg += ":";
     cfg += stationgateway;                cfg += ":";
     cfg += TOGATE_COMMAND_TIMEOUT / 1000; cfg += ":";
     cfg += serialLevel;                   cfg += ":";
@@ -3277,55 +2631,27 @@ void interpreter(String msg){
     cfg += filetxtimeout;                 cfg += ":";
     ioOutput("CFG:" + cfg);
   }
-  // ── setcfg : reçoit p.cfg depuis le configurateur, applique et sauvegarde ──
-  // Format attendu : setcfg:MAX_PING_AGE:starttimeout:...:filetxtimeout:
+  // -- setcfg : recoit p.cfg depuis le configurateur, applique et sauvegarde --
+  // Format attendu : setcfg:MAX_PING_AGE:localAddress:...:filetxtimeout:
   if(cmd == "setcfg"){
     int fieldCount = 0;
     for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
-    if(fieldCount < 14){
-      ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/14 champs)");
+    if(fieldCount < 13){
+      ioOutput("CFG:ERR:format invalide (" + String(fieldCount) + "/13 champs)");
     } else {
       MAX_PING_AGE           = getValue(msg,':',1).toInt() * 1000L;
-      starttimeout           = getValue(msg,':',2).toInt() * 1000L;
-      localAddress           = getValue(msg,':',3).toInt();
-      DELAY                  = getValue(msg,':',4).toInt() * 1000L;
-      MAX_ENTRY_AGE          = getValue(msg,':',5).toInt() * 1000L;
-      actiontimerdel         = getValue(msg,':',6).toInt();
-      maintmode              = getValue(msg,':',7).toInt();
-      stationgateway         = getValue(msg,':',8).toInt();
-      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',9).toInt() * 1000L;
-      { int sl = getValue(msg,':',10).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      { int im = getValue(msg,':',11).toInt(); if(im >= IO_USB  && im <= IO_BLUETOOTH) ioMode = im; }
-      { long nt = getValue(msg,':',12).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
-      { int ft  = getValue(msg,':',13).toInt(); if(ft  > 0) filetimeout  = ft; }
-      { int fxt = getValue(msg,':',14).toInt(); if(fxt > 0) filetxtimeout = fxt; }
+      localAddress           = getValue(msg,':',2).toInt();
+      DELAY                  = getValue(msg,':',3).toInt() * 1000L;
+      MAX_ENTRY_AGE          = getValue(msg,':',4).toInt() * 1000L;
+      stationgateway         = getValue(msg,':',5).toInt();
+      TOGATE_COMMAND_TIMEOUT = getValue(msg,':',6).toInt() * 1000L;
+      { int sl = getValue(msg,':',7).toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
+      { int im = getValue(msg,':',10).toInt(); if(im == IO_USB) ioMode = im; }
+      { long nt = getValue(msg,':',11).toInt(); if(nt > 0) NETIO_TIMEOUT = nt * 1000L; }
+      { int ft  = getValue(msg,':',12).toInt(); if(ft  > 0) filetimeout  = ft; }
+      { int fxt = getValue(msg,':',13).toInt(); if(fxt > 0) filetxtimeout = fxt; }
       writetosd();
       ioOutput("CFG:OK");
-    }
-  }
-  // ── getsensor : envoie l'état des capteurs au configurateur ──
-  if(cmd == "getsensor"){
-    String s;
-    s += sensor_bme680 ? 1 : 0; s += ":";
-    s += sensor_aht20  ? 1 : 0; s += ":";
-    s += sensor_bmp280 ? 1 : 0; s += ":";
-    s += sensor_ds18b20 ? 1 : 0; s += ":";
-    ioOutput("SENSOR:" + s);
-  }
-  // ── setsensor : reçoit la config capteurs, applique et sauvegarde ──
-  // Format attendu : setsensor:<bme680>:<aht20>:<bmp280>
-  if(cmd == "setsensor"){
-    int fieldCount = 0;
-    for(int i = 0; i < (int)msg.length(); i++) if(msg[i] == ':') fieldCount++;
-    if(fieldCount < 3){
-      ioOutput("SENSOR:ERR:format invalide (" + String(fieldCount) + "/3 champs)");
-    } else {
-      sensor_bme680 = getValue(msg,':',1).toInt() == 1;
-      sensor_aht20  = getValue(msg,':',2).toInt() == 1;
-      sensor_bmp280 = getValue(msg,':',3).toInt() == 1;
-      sensor_ds18b20 = getValue(msg,':',4).toInt() == 1;
-      writeSensorCfg();
-      ioOutput("SENSOR:OK");
     }
   }
   if(cmd == "data"){
@@ -3379,7 +2705,7 @@ void interpreter(String msg){
       removeEdgesByVertex(localAddress);
       sendMessage(1, "ping", 0);
       pingphase = 1;
-      logN("[PING] Envoi des sondes de découverte réseau...");
+      logN("[PING] Envoi des sondes de decouverte reseau...");
       tmps = (millis()/1000);
     }  
     if(cmd == "dijk"){
@@ -3456,7 +2782,7 @@ void interpreter(String msg){
       }
     }
     if(cmd == "arok"){
-      logN("[MESSAGE] Accusé de réception — message #" + getValue(msg, ':', 1) + " bien livré au noeud #" + getValue(msg, ':', 2));
+      logN("[MESSAGE] Accuse de reception - message #" + getValue(msg, ':', 1) + " bien livre au noeud #" + getValue(msg, ':', 2));
       togateRemoveById(getValue(msg, ':', 1).toInt());
       togateRemoveByIdFile(getValue(msg, ':', 1).toInt());
     }
@@ -3527,10 +2853,6 @@ void interpreter(String msg){
       }
     }
     if (cmd == "tmap") {
-      if(startstat == 4){        
-        startstat = 5;
-        rtmapdel = millis()/1000;
-      }
       int pcount = 1;
       while (getValue(msg, ':', pcount) != "") {
         addOrUpdateEdge(
@@ -3550,10 +2872,6 @@ void interpreter(String msg){
       delay(1000 - delaygeth);
       rtc.setTime(((getValue(msg, ':', 1)).toInt()) + 1);
       logV("seth:set=" + getValue(msg, ':', 1));
-      if(startstat == 7){
-        startstat = 8;
-        logN("[OK] Noeud #" + String(localAddress) + " opérationnel et connecté au réseau");
-      }
     }
     if(cmd == "geth"){
       delay(50);
@@ -3568,25 +2886,7 @@ void interpreter(String msg){
     if(cmd == "prgh"){
       rtc.setTime((getValue(msg, ':', 1)).toInt());
     }
-    if(cmd == "star"){
-      startstat = 1;
-    }
-    if(cmd == "sho"){
-      logN("[MODE] Maintenance actuellement " + String(maintmode ? "activée (veille désactivée)" : "désactivée (mode nominal)"));
-    }
-    if(cmd == "maint"){
-      maintmode = true;
-      logN("[MODE] Passage en mode maintenance — la veille automatique est désactivée");
-    }
-    if(cmd == "norm"){
-      maintmode = false;
-      logN("[MODE] Passage en mode nominal — la veille automatique est activée");
-    }
-    if(cmd == "stam"){
-      rtc.setTime((getValue(msg, ':', 1)).toInt());
-      startstat = 8;
-      logN("[OK] Noeud #" + String(localAddress) + " synchronisé et opérationnel");
-    }
+
     if(cmd == "fdih"){
       delay(10);
       timegeth = millis();
@@ -3608,7 +2908,7 @@ void interpreter(String msg){
       }
    }
    if(cmd == "gate"){
-      logN("[GATEWAY] Adresse de la passerelle réseau : noeud #" + String(stationgateway));
+      logN("[GATEWAY] Adresse de la passerelle reseau : noeud #" + String(stationgateway));
    }
    if(cmd == "gdfh"){
     String tempid = generateid();
@@ -3619,26 +2919,21 @@ void interpreter(String msg){
     sendMessage(1, tosenddifh, 0);
     logD("gdfh:" + tosenddifh);
     }
-    if(cmd == "dexp"){
-      String togate = exportdata(getValue(msg, ':', 1));
-      logD("dexp:" + togate);
-      String tempid = generateid();
-      String load = "send:";
-      load += stationgateway;
-      load += ":load:";
-      load += localAddress;
-      load += ":";
-      load += togate.length();
-      load += ":";
-      load += tempid;
-      load += ":";
-      load += togate;
-      logD("dexp:load " + load);
-      togateAddCommand(tempid.toInt(), load);
-      interpreter(load);
-    }
     if(cmd == "gmea"){
-      measuretodump(getValue(msg, ':', 1).toInt());
+      String s;
+      s += "trxglob:" + String(rxglob) + ";";
+      s += "trxbrd:"  + String(rxbrd)  + ";";
+      s += "trxloc:"  + String(rxloc)  + ";";
+      s += "tdijktx:" + String(dijktx) + ";";
+      s += "tdijkrx:" + String(dijkrx) + ";";
+      s += "tdijkhop:"+ String(dijkhop)+ ";";
+      s += "tresend1:"+ String(resend1)+ ";";
+      s += "tresend2:"+ String(resend2)+ ";";
+      s += "ttxcnt:"  + String(txcnt)  + ";";
+      ioOutput(s);
+      rxglob = 0; rxbrd = 0; rxloc = 0;
+      dijktx = 0; dijkrx = 0; dijkhop = 0;
+      resend1 = 0; resend2 = 0; txcnt = 0;
     }
     if(cmd == "parm"){
       changepval(getValue(msg, ':', 1), getValue(msg, ':', 2));
@@ -3650,39 +2945,30 @@ void interpreter(String msg){
       else if(arg == "verbose") serialLevel = LOG_VERBOSE;
       else if(arg == "debug")   serialLevel = LOG_DEBUG;
       else { int sl = arg.toInt(); if(sl >= LOG_NONE && sl <= LOG_DEBUG) serialLevel = sl; }
-      // En mode esclave netio, le niveau est contraint à [1, 2] :
-      // 0 (silencieux) priverait le maître de toute sortie,
+      // En mode esclave netio, le niveau est contraint a [1, 2] :
+      // 0 (silencieux) priverait le maitre de toute sortie,
       // 3 (debug) inonderait le tunnel de messages internes.
-      if(netioSlave) serialLevel = constrain(serialLevel, LOG_NORMAL, LOG_VERBOSE);
-      ioOutput("[CONFIG] Niveau de log réglé sur '" + arg + "' (" + String(serialLevel) + ")");
+      ioOutput("[CONFIG] Niveau de log regle sur '" + arg + "' (" + String(serialLevel) + ")");
       writetosd();
     }
     if(cmd == "iomd"){
       String arg = getValue(msg, ':', 1);
       if(arg == "usb"){
-        if(ioMode == IO_BLUETOOTH) stopBLE();
         ioMode = IO_USB;
-        ioOutput("[IO] Mode USB activé");
+        ioOutput("[IO] Mode USB active");
         writetosd();
-      } else if(arg == "bt"){
-        if(ioMode != IO_BLUETOOTH){
-          ioMode = IO_BLUETOOTH;
-          startBLE();
-          writetosd();
-        }
-        ioOutput("[IO] Mode Bluetooth activé — appareil: Mycromesh-" + String(localAddress));
       } else {
-        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  iomd:bt  (netio:<addr> pour le tunnel réseau)");
+        ioOutput("[IO] Mode inconnu. Commandes: iomd:usb  (netio:<addr> pour le tunnel reseau)");
       }
     }
     if(cmd == "cout"){
-      logN("[GATEWAY] Envoi de la prochaine entrée du cache vers la passerelle...");
+      logN("[GATEWAY] Envoi de la prochaine entree du cache vers la passerelle...");
       exportcache();
     }
     if(cmd == "clear"){
       int prevEdges = numEdges;
       clearEdges();
-      logN("[OK] Table de routage effacée (" + String(prevEdges) + " lien(s) supprimé(s))");
+      logN("[OK] Table de routage effacee (" + String(prevEdges) + " lien(s) supprime(s))");
     }
     if(cmd == "cachestate"){
       logN("[GATEWAY] Cache actif : " + String(prefs.getBool("incache",0) ? "oui" : "non") + "  |  passerelle en ligne : " + String(prefs.getBool("isgateonline",0) ? "oui" : "non") + "  |  commandes en attente : " + String(togateCount));
@@ -3702,12 +2988,12 @@ void interpreter(String msg){
       logN("[FICHIER TX] Initialisation du transfert vers le noeud #" + String(filereceivientstation) + "...");
     }
     if(cmd == "filestate"){
-      logN("[FICHIER TX] État — cache actif : " + String(infilecache ? "oui" : "non") + "  |  envoi actif : " + String(isfdeson ? "oui" : "non") + "  |  lignes en attente : " + String(togateCountFile));
+      logN("[FICHIER TX] Etat - cache actif : " + String(infilecache ? "oui" : "non") + "  |  envoi actif : " + String(isfdeson ? "oui" : "non") + "  |  lignes en attente : " + String(togateCountFile));
     }
     if(cmd == "stopfile"){
       isfdeson = false;
       infilecache = false;
-      logN("[FICHIER TX] Transfert de fichier arrêté manuellement");
+      logN("[FICHIER TX] Transfert de fichier arrete manuellement");
     }
     if(cmd == "expfile"){
       logN("[FICHIER TX] Envoi de la prochaine ligne du fichier en cache...");
@@ -3726,7 +3012,7 @@ void interpreter(String msg){
           infilecache = true;
           filereceivientstation = getValue(msg, ':', 1).toInt();
           filetxdelai = (millis()/1000);
-          logN("[FICHIER TX] Fichier " + ftfpath + " prêt, connexion avec le noeud #" + String(filereceivientstation) + " en cours...");
+          logN("[FICHIER TX] Fichier " + ftfpath + " pret, connexion avec le noeud #" + String(filereceivientstation) + " en cours...");
           String tempisrf = "send:";
           tempisrf += filereceivientstation;
           tempisrf += ":isrf:";
@@ -3739,7 +3025,7 @@ void interpreter(String msg){
       if(filereceivientstation == -1 && filesender == -1 && !broadcastMode){
         filedelai = (millis()/1000);
         filesender = getValue(msg, ':', 1).toInt();
-        logN("[FICHIER RX] Début de réception d'un fichier depuis le noeud #" + String(filesender));
+        logN("[FICHIER RX] Debut de reception d'un fichier depuis le noeud #" + String(filesender));
         remfromsd("/rx.txt");
         String temprfok = "send:";
         temprfok += filesender;
@@ -3750,7 +3036,7 @@ void interpreter(String msg){
     }
     if(cmd == "rfok"){
       if(getValue(msg, ':', 1).toInt() == filereceivientstation && isfdeson == false){
-        logN("[FICHIER TX] Noeud #" + String(filereceivientstation) + " prêt, envoi de " + ftfpath + " en cours...");
+        logN("[FICHIER TX] Noeud #" + String(filereceivientstation) + " pret, envoi de " + ftfpath + " en cours...");
         isfdeson = true;
         prefs.putUInt("offsetfile", 0);
         nbtogatefailfile = 0;
@@ -3760,7 +3046,7 @@ void interpreter(String msg){
     
     if(cmd == "fend"){
       if(getValue(msg, ':', 1).toInt() == filesender){
-        logN("[FICHIER RX] Fin de réception depuis le noeud #" + String(filesender) + ", compilation vers " + getValue(msg, ':', 2) + "...");
+        logN("[FICHIER RX] Fin de reception depuis le noeud #" + String(filesender) + ", compilation vers " + getValue(msg, ':', 2) + "...");
         String tempfntc = "compileFile:";
         tempfntc += getValue(msg, ':', 2);
         tempfntc += ":";
@@ -3775,52 +3061,52 @@ void interpreter(String msg){
       compileFile(getValue(msg, ':', 1), getValue(msg, ':', 2).toInt(), getValue(msg, ':', 3).toInt());      
     }
     if(cmd == "feok"){
-      logN("[FICHIER TX] Confirmation reçue — " + getValue(msg, ':', 2) + " bien reçu par le noeud #" + getValue(msg, ':', 1));
+      logN("[FICHIER TX] Confirmation recue - " + getValue(msg, ':', 2) + " bien recu par le noeud #" + getValue(msg, ':', 1));
       if(getValue(msg, ':', 3) == "1"){
         logD("feok:rm " + getValue(msg, ':', 2));
         remfromsd(getValue(msg, ':', 2));
       }
     }
     if(cmd == "reboot"){
-      logN("[SYSTÈME] Redémarrage du noeud en cours...");
+      logN("[SYSTEME] Redemarrage du noeud en cours...");
       writetosd();
       delay(500);
       ESP.restart();
     }
     if(cmd == "upgrade"){
-      logN("[MISE À JOUR] Lancement de la mise à jour du firmware...");
+      logN("[MISE A JOUR] Lancement de la mise a jour du firmware...");
       writetosd();
       delay(500);
       doFirmwareUpdate();
     }
     if(cmd == "version"){
-      logN("[SYSTÈME] Version du firmware : " + FIRMWARE_VERSION);
+      logN("[SYSTEME] Version du firmware : " + FIRMWARE_VERSION);
     }
     if(cmd == "mkdir"){
       String path = getValue(msg, ':', 1);
-      logN("[SD] Dossier " + path + (mkdirsd(path) ? " créé avec succès" : " — erreur de création"));
+      logN("[SD] Dossier " + path + (mkdirsd(path) ? " cree avec succes" : " - erreur de creation"));
     }
     if(cmd == "rmdir"){
       String path = getValue(msg, ':', 1);
-      logN("[SD] Dossier " + path + (rmdirsd(path) ? " supprimé" : " — erreur de suppression"));
+      logN("[SD] Dossier " + path + (rmdirsd(path) ? " supprime" : " - erreur de suppression"));
     }
     if(cmd == "rm"){
       String path = getValue(msg, ':', 1);
-      logN("[SD] Fichier " + path + (remfromsd(path) ? " supprimé" : " — erreur de suppression"));
+      logN("[SD] Fichier " + path + (remfromsd(path) ? " supprime" : " - erreur de suppression"));
     }
     if(cmd == "cp"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      logN("[SD] Copie " + src + " -> " + dst + (cpsd(src, dst) ? " : succès" : " : erreur"));
+      logN("[SD] Copie " + src + " -> " + dst + (cpsd(src, dst) ? " : succes" : " : erreur"));
     }
     if(cmd == "mv"){
       String src = getValue(msg, ':', 1);
       String dstDir = getValue(msg, ':', 2);
       String fname = src.substring(src.lastIndexOf('/'));
       String dst = dstDir.endsWith("/") ? dstDir + fname.substring(1) : dstDir + fname;
-      logN("[SD] Déplacement " + src + " -> " + dst + (mvsd(src, dst) ? " : succès" : " : erreur"));
+      logN("[SD] Deplacement " + src + " -> " + dst + (mvsd(src, dst) ? " : succes" : " : erreur"));
     }
     if(cmd == "ls"){
       String path = getValue(msg, ':', 1);
@@ -3828,8 +3114,8 @@ void interpreter(String msg){
       lssd(path);
     }
 
-    // Diffusion de la réussite de compilation (schedulé 5 min après compileFile OK)
-    // Format diffusé : bcok:ID:STATION:CHEMIN
+    // Diffusion de la reussite de compilation (schedule 5 min apres compileFile OK)
+    // Format diffuse : bcok:ID:STATION:CHEMIN
     if (cmd == "bcok") {
       String tempid = generateid();
       String bcok = "bcok:";
@@ -3837,30 +3123,30 @@ void interpreter(String msg){
       bcok += ":";
       bcok += localAddress;
       bcok += ":";
-      bcok += getValue(msg, ':', 1);  // chemin du fichier compilé
-      addValue(tempid);  // Éviter de retraiter notre propre bcok si reçu en écho
-      sendMessage(0, bcok, 0);  // Diffusion sans réveil
+      bcok += getValue(msg, ':', 1);  // chemin du fichier compile
+      addValue(tempid);  // Eviter de retraiter notre propre bcok si recu en echo
+      sendMessage(0, bcok, 0);  // Diffusion sans reveil
       logV("bcok:" + getValue(msg, ':', 1));
     }
 
     // ================================================================
-    // DIFFUSION DE MISE À JOUR FIRMWARE : bupd
-    // Déclenche sur l'ensemble du réseau une mise à jour 60 s après réception
+    // DIFFUSION DE MISE A JOUR FIRMWARE : bupd
+    // Declenche sur l'ensemble du reseau une mise a jour 60 s apres reception
     // ================================================================
     if (cmd == "bupd") {
       String tempid = generateid();
       String bupd = "bupd:";
       bupd += tempid;
       addValue(tempid);
-      sendMessage(0, bupd, 0);  // Diffusion sans réveil
-      logN("[MÀJU RÉSEAU] Diffusion de mise à jour envoyée — chaque station upgradée dans 60 s");
-      scheduleCommand(30000, "upgrade");  // La station émettrice upgradera également
+      sendMessage(0, bupd, 0);  // Diffusion sans reveil
+      logN("[MAJU RESEAU] Diffusion de mise a jour envoyee - chaque station upgradee dans 60 s");
+      scheduleCommand(30000, "upgrade");  // La station emettrice upgradera egalement
     }
 
     // ================================================================
     // DIFFUSION DE VERSION FIRMWARE : fwver
-    // Diffuse la version du firmware actuel à l'ensemble du réseau
-    // (planifié automatiquement 5 min après une mise à jour réussie)
+    // Diffuse la version du firmware actuel a l'ensemble du reseau
+    // (planifie automatiquement 5 min apres une mise a jour reussie)
     // ================================================================
     if (cmd == "fwver") {
       String tempid = generateid();
@@ -3871,13 +3157,13 @@ void interpreter(String msg){
       fwver += ":";
       fwver += localAddress;
       addValue(tempid);
-      sendMessage(0, fwver, 0);  // Diffusion sans réveil
-      logN("[MÀJU RÉSEAU] Diffusion de version firmware : " + FIRMWARE_VERSION);
+      sendMessage(0, fwver, 0);  // Diffusion sans reveil
+      logN("[MAJU RESEAU] Diffusion de version firmware : " + FIRMWARE_VERSION);
     }
 
     // ================================================================
-    // DIFFUSION RÉSEAU : diff:chemin/fichier
-    // Diffuse un fichier vers l'ensemble du réseau (broadcast)
+    // DIFFUSION RESEAU : diff:chemin/fichier
+    // Diffuse un fichier vers l'ensemble du reseau (broadcast)
     // ================================================================
     if (cmd == "diff") {
       if (!broadcastMode && filereceivientstation == -1 && filesender == -1) {
@@ -3897,19 +3183,19 @@ void interpreter(String msg){
           brdl += broadcastPath;
           addValue(tempid);
           sendMessage(1, brdl, 0);
-          logD("diff:brdl envoyé");
+          logD("diff:brdl envoye");
           scheduleCommand(5000, "brdfstart");
         } else {
-          logN("[ERREUR] Diffusion réseau : impossible de parser le fichier source");
+          logN("[ERREUR] Diffusion reseau : impossible de parser le fichier source");
           broadcastMode = false;
           broadcastEmitter = false;
         }
       } else {
-        logN("[ERREUR] Diffusion impossible : un transfert ou une diffusion est déjà en cours");
+        logN("[ERREUR] Diffusion impossible : un transfert ou une diffusion est deja en cours");
       }
     }
 
-    // Déclenchement de l'envoi des lignes brdf (après délai propagation brdl)
+    // Declenchement de l'envoi des lignes brdf (apres delai propagation brdl)
     if (cmd == "brdfstart") {
       if (broadcastEmitter) {
         broadcastFileSending = true;
@@ -3923,16 +3209,16 @@ void interpreter(String msg){
       logD("diff:rx init");
     }
 
-    // Réception d'une ligne de données diffusée : brdf:SEQ:LINEDATA
+    // Reception d'une ligne de donnees diffusee : brdf:SEQ:LINEDATA
     if (cmd == "brdf") {
       if (broadcastMode && !broadcastEmitter) {
-        // Extraction de LINEDATA en évitant les problèmes de split sur ':' dans les données
+        // Extraction de LINEDATA en evitant les problemes de split sur ':' dans les donnees
         String seqStr = getValue(msg, ':', 1);
         int lineStart = 5 + seqStr.length() + 1;  // "brdf:" + seqStr + ":"
         String lineData = msg.substring(lineStart);
         if (lineData.length() > 0) {
           importfile("/rx.txt", lineData);
-          // Rétransmission sans réveil avec délai proportionnel au rang
+          // Retransmission sans reveil avec delai proportionnel au rang
           String rbrdf = "trsms:0:";
           rbrdf += msg;
           scheduleCommand(20 * localAddress, rbrdf);
@@ -3940,20 +3226,20 @@ void interpreter(String msg){
       }
     }
 
-    // Réception du signal de fin de diffusion : brde:ID:chemin
+    // Reception du signal de fin de diffusion : brde:ID:chemin
     if (cmd == "brde") {
       if (broadcastMode && !broadcastEmitter) {
         String filePath = getValue(msg, ':', 2);
         logV("diff:rx fin -> " + filePath);
         broadcastMode = false;
         lastBrdfSeq = -1;
-        compileFile(filePath, -1, 0);  // origin=-1 : pas de feok à envoyer
+        compileFile(filePath, -1, 0);  // origin=-1 : pas de feok a envoyer
         logV("diff:rx done");
       }
     }
 
     // ================================================================
-    // MODE RÉSEAU E/S (netio) — tunnel maître/esclave via le maillage
+    // MODE RESEAU E/S (netio) - tunnel maitre/esclave via le maillage
     // ================================================================
 
     // Commande utilisateur : ouvre un tunnel vers l'esclave <addr>
@@ -3962,76 +3248,45 @@ void interpreter(String msg){
       int slaveAddr = getValue(msg, ':', 1).toInt();
       if (slaveAddr <= 0) {
         ioOutput("[NETIO] Erreur : adresse esclave invalide");
-      } else if (netioMaster || netioSlave) {
-        ioOutput("[NETIO] Un tunnel réseau est déjà actif");
+      } else if (netioMaster) {
+        ioOutput("[NETIO] Un tunnel reseau est deja actif");
       } else {
         ioOutput("[NETIO] Ouverture du tunnel vers le noeud #" + String(slaveAddr) + "...");
         ntioPrevIoMode    = ioMode;
-        ntioPrevMaintMode = maintmode;
         netioRemote       = slaveAddr;
-        maintmode         = true;
         netioLastActivity = millis();
-        // Paquet d'initialisation envoyé via trsp (fiable, avec accusé de réception)
+        // Paquet d'initialisation envoye via trsp (fiable, avec accuse de reception)
         interpreter("trsp:" + String(slaveAddr) + ":ntiopen:" + String(localAddress));
-        // Passer en mode maître après l'envoi pour ne pas supprimer les logs de l'init
+        // Passer en mode maitre apres l'envoi pour ne pas supprimer les logs de l'init
         netioMaster = true;
         ioMode      = IO_NETIO;
       }
     }
 
-    // Reçu par l'esclave : le maître demande l'ouverture du tunnel
-    // Format : ntiopen:<master_addr>
-    if (cmd == "ntiopen") {
-      int masterAddr = getValue(msg, ':', 1).toInt();
-      if (!netioMaster && !netioSlave && masterAddr > 0) {
-        ntioPrevIoMode    = ioMode;
-        ntioPrevMaintMode = maintmode;
-        netioRemote       = masterAddr;
-        maintmode         = true;
-        netioLastActivity = millis();
-        logN("[NETIO] Mode esclave activé — maître : noeud #" + String(masterAddr));
-        // Confirmer au maître via trsp (fiable) avant de basculer le mode
-        interpreter("trsp:" + String(masterAddr) + ":ntiok");
-        // Basculer en mode esclave
-        netioSlave = true;
-        ioMode     = IO_NETIO;
-      }
-    }
-
-    // Reçu par le maître : l'esclave confirme que le tunnel est établi
+    // Recu par le maitre : l'esclave confirme que le tunnel est etabli
     // Format : ntiok
     if (cmd == "ntiok") {
       if (netioMaster && netioRemote >= 0) {
         netioLastActivity = millis();
-        netioDisplay("[NETIO] Tunnel ouvert avec le noeud #" + String(netioRemote) + " — tapez 'exit' pour fermer");
+        netioDisplay("[NETIO] Tunnel ouvert avec le noeud #" + String(netioRemote) + " - tapez 'exit' pour fermer");
       }
     }
 
-    // Reçu par l'esclave : commande à exécuter localement, envoyée par le maître
-    // Format : ntidata:<commande>
-    if (cmd == "ntidata") {
-      if (netioSlave) {
-        netioLastActivity = millis();
-        String subcmd = msg.substring(8); // retire le préfixe "ntidata:"
-        interpreter(subcmd);
-      }
-    }
-
-    // Reçu par le maître : réponse de l'esclave à afficher localement
+    // Recu par le maitre : reponse de l'esclave a afficher localement
     // Format : ntirsp:<message>
     if (cmd == "ntirsp") {
       if (netioMaster) {
         netioLastActivity = millis();
-        netioDisplay(msg.substring(7)); // retire le préfixe "ntirsp:"
+        netioDisplay(msg.substring(7)); // retire le prefixe "ntirsp:"
       }
     }
 
-    // Reçu par l'un ou l'autre : fermeture du tunnel (depuis timeout ou commande distante)
+    // Recu par l'un ou l'autre : fermeture du tunnel (depuis timeout ou commande distante)
     // Format : nticlose
     if (cmd == "nticlose") {
-      if (netioMaster || netioSlave) {
+      if (netioMaster) {
         closeNetioTunnel();
-        ioOutput("[NETIO] Tunnel réseau fermé");
+        ioOutput("[NETIO] Tunnel reseau ferme");
       }
     }
 }
