@@ -2149,24 +2149,27 @@ String getLocalIP() {
 // Initialise Ethernet et Wi-Fi simultanement.
 // A appeler depuis setup() apres readsd() pour disposer des credentials.
 void initNetwork() {
-  // Demarrage Ethernet LAN8720
+  // WiFi AVANT ETH : en ESP32 Arduino v3.x, initialiser ETH en premier
+  // modifie l'etat interne du stack WiFi et empeche WiFi.begin() de connecter.
+  // L'ordre correct pour l'operation simultanee ETH + WiFi est WiFi d'abord.
+  if (wifiSSID.length() > 0) {
+    wifiStarted = true;
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    char ssidBuf[64] = {};
+    wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+    WiFi.begin(ssidBuf, wifiPassword.c_str());
+    logN("[WIFI] Connexion a '" + wifiSSID + "'...");
+  } else {
+    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
+  }
+
+  // Ethernet LAN8720 (apres WiFi)
   // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
   ETH.begin(ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO,
             ETH_PHY_POWER, NET_ETH_CLK_MODE);
   ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
-
-  // Demarrage Wi-Fi differe : le LAN8720 effectue sa negociation MDIO en
-  // arriere-plan pendant ~40-60 s (meme sans cable), ce qui perturbe le stack
-  // WiFi si WiFi.begin() est appele trop tot.
-  // La premiere tentative est planifiee 30 s apres le boot (= delai par defaut
-  // de checkNetworkReconnect), ce qui laisse ETH se stabiliser.
-  if (wifiSSID.length() > 0) {
-    lastWifiReconnectMs = millis();  // premier essai dans 30 s
-    logN("[WIFI] Connexion a '" + wifiSSID + "' dans ~30 s (attente stabilisation ETH)...");
-  } else {
-    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
-  }
 }
 
 // Surveillance de l'etat reseau et reconnexion automatique.
