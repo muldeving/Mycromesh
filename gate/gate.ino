@@ -157,6 +157,7 @@ NetIface activeIface   = IFACE_NONE;
 static unsigned long lastWifiReconnectMs = 0;
 static unsigned long lastNetLogMs        = 0;
 static unsigned long lastNetCheckMs      = 0;
+static bool          wifiStarted         = false;  // WiFi.begin() appele une seule fois
 
 // ============================================================
 
@@ -2223,15 +2224,16 @@ void checkNetworkReconnect() {
       }
     }
 
-    // Tentative de reconnexion Wi-Fi toutes les 30 s si liaison perdue
-    if (!wifiConnected &&
+    // Premier demarrage Wi-Fi : differe de 30 s pour laisser ETH se stabiliser.
+    // WiFi.begin() est appele UNE SEULE FOIS. La reconnexion automatique est
+    // geree par WiFi.setAutoReconnect(true) — on n'appelle jamais begin() a
+    // nouveau dans cette boucle pour ne pas interrompre une connexion en cours.
+    if (!wifiStarted &&
         (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
-      lastWifiReconnectMs = now;
-      // WiFi.disconnect() gere tous les etats intermediaires (y compris WL_IDLE_STATUS
-      // avant le premier WiFi.begin()), la verification du statut est donc inutile.
-      logV("[WIFI] Reconnexion...");
+      wifiStarted = true;
+      logN("[WIFI] Demarrage connexion...");
       WiFi.mode(WIFI_STA);
-      WiFi.disconnect();
+      WiFi.setAutoReconnect(true);
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
       WiFi.begin(ssidBuf, wifiPassword.c_str());
@@ -3517,7 +3519,9 @@ void interpreter(String msg){
       wifiPassword = newPass;
       writetosd();
       logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
+      wifiStarted = true;  // marque comme demarre pour ne pas rappeler begin() dans checkNetworkReconnect
       WiFi.mode(WIFI_STA);
+      WiFi.setAutoReconnect(true);
       WiFi.disconnect();
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
