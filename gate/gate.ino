@@ -2124,6 +2124,8 @@ bool doFirmwareUpdate() {
 
 // ============================================================
 // Phase 1 — Fonctions reseau
+// Approche par polling : compatible ESP32 core v2.x et v3.x,
+// et contourne le conflit avec la bibliotheque Arduino WiFi standard.
 // ============================================================
 
 // Retourne l'adresse IP de l'interface active, ou "" si aucune.
@@ -2133,107 +2135,93 @@ String getLocalIP() {
   return "";
 }
 
-// Gestionnaire d'evenements reseau (ETH + Wi-Fi).
-void onNetEvent(WiFiEvent_t event) {
-  switch (event) {
-
-    case ARDUINO_EVENT_ETH_START:
-      logN("[ETH] Demarrage...");
-      ETH.setHostname("mycromesh-gate");
-      break;
-
-    case ARDUINO_EVENT_ETH_CONNECTED:
-      logN("[ETH] Liaison physique etablie");
-      break;
-
-    case ARDUINO_EVENT_ETH_GOT_IP:
-      ethConnected = true;
-      activeIface  = IFACE_ETH;   // Ethernet est prioritaire
-      logN("[ETH] IP=" + ETH.localIP().toString() +
-           " vitesse=" + String(ETH.linkSpeed()) + "Mbps" +
-           " duplex=" + String(ETH.fullDuplex() ? "full" : "half"));
-      break;
-
-    case ARDUINO_EVENT_ETH_LOST_IP:
-    case ARDUINO_EVENT_ETH_DISCONNECTED:
-      logN("[ETH] Liaison perdue");
-      ethConnected = false;
-      if (activeIface == IFACE_ETH) {
-        if (wifiConnected) {
-          activeIface = IFACE_WIFI;
-          logN("[RESEAU] Bascule Wi-Fi — IP=" + WiFi.localIP().toString());
-        } else {
-          activeIface = IFACE_NONE;
-          logN("[RESEAU] Aucune interface disponible");
-        }
-      }
-      break;
-
-    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-      logV("[WIFI] Associe a " + wifiSSID);
-      break;
-
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      wifiConnected = true;
-      if (activeIface == IFACE_NONE) {
-        activeIface = IFACE_WIFI;
-        logN("[WIFI] IP=" + WiFi.localIP().toString());
-      } else {
-        // Ethernet deja actif : Wi-Fi en standby
-        logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
-      }
-      break;
-
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
-      logN("[WIFI] Deconnexion");
-      wifiConnected = false;
-      if (activeIface == IFACE_WIFI) {
-        activeIface = IFACE_NONE;
-        logN("[RESEAU] Aucune interface disponible");
-      }
-      break;
-
-    default:
-      break;
-  }
-}
-
 // Initialise Ethernet et Wi-Fi simultanement.
 // A appeler depuis setup() apres readsd() pour disposer des credentials.
 void initNetwork() {
-  WiFi.onEvent(onNetEvent);
-
   // Demarrage Ethernet LAN8720
-  ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER, ETH_PHY_MDC, ETH_PHY_MDIO,
-            ETH_PHY_TYPE, NET_ETH_CLK_MODE);
+  // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
+  ETH.begin(ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO,
+            ETH_PHY_POWER, NET_ETH_CLK_MODE);
+  logN("[ETH] Initialisation LAN8720...");
 
   // Demarrage Wi-Fi si les credentials sont configures
+  // WiFi.begin prend char* (compatible avec la bibliotheque Arduino WiFi standard)
   if (wifiSSID.length() > 0) {
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    char ssidBuf[64] = {};
+    wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+    WiFi.begin(ssidBuf, wifiPassword.c_str());
     logN("[WIFI] Connexion a '" + wifiSSID + "'...");
   } else {
     logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
   }
 }
 
-// Gestion de la reconnexion automatique.
-// A appeler periodiquement depuis loop().
+// Surveillance de l'etat reseau et reconnexion automatique.
+// Appellee a chaque iteration de loop() ; les transitions sont detectees
+// par comparison avec les variables ethConnected / wifiConnected.
 void checkNetworkReconnect() {
   unsigned long now = millis();
 
-  // Tentative de reconnexion Wi-Fi toutes les 30 s si la liaison est perdue
+  // --- Etat Ethernet (polling via adresse IP) ---
+  // ETH.localIP() retourne 0.0.0.0 tant qu'aucune IP n'est obtenue (DHCP).
+  bool newEthConn = (ETH.localIP() != IPAddress(0, 0, 0, 0));
+  if (newEthConn != ethConnected) {
+    ethConnected = newEthConn;
+    if (ethConnected) {
+      // Ethernet (re)connecte : il devient l'interface active (prioritaire)
+      activeIface = IFACE_ETH;
+      logN("[ETH] IP=" + ETH.localIP().toString());
+    } else {
+      logN("[ETH] Liaison perdue");
+      if (activeIface == IFACE_ETH) {
+        activeIface = wifiConnected ? IFACE_WIFI : IFACE_NONE;
+        if (activeIface == IFACE_WIFI)
+          logN("[RESEAU] Bascule Wi-Fi — IP=" + WiFi.localIP().toString());
+        else
+          logN("[RESEAU] Aucune interface disponible");
+      }
+    }
+  }
+  // Si ETH est revenue alors qu'une autre interface etait active
+  if (ethConnected && activeIface != IFACE_ETH) {
+    activeIface = IFACE_ETH;
+    logN("[RESEAU] Retour Ethernet — IP=" + ETH.localIP().toString());
+  }
+
+  // --- Etat Wi-Fi (polling via WiFi.status()) ---
+  // Utilise int pour eviter le conflit de type entre wl_status_t (ESP32)
+  // et uint8_t (bibliotheque Arduino WiFi standard).
+  int wifiStat = (int)WiFi.status();
+  bool newWifiConn = (wifiStat == WL_CONNECTED);
+  if (newWifiConn != wifiConnected) {
+    wifiConnected = newWifiConn;
+    if (wifiConnected) {
+      if (activeIface == IFACE_NONE) {
+        activeIface = IFACE_WIFI;
+        logN("[WIFI] IP=" + WiFi.localIP().toString());
+      } else {
+        logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
+      }
+    } else {
+      logN("[WIFI] Deconnexion");
+      if (activeIface == IFACE_WIFI) {
+        activeIface = IFACE_NONE;
+        logN("[RESEAU] Aucune interface disponible");
+      }
+    }
+  }
+
+  // Tentative de reconnexion Wi-Fi toutes les 30 s si liaison perdue
   if (!wifiConnected && wifiSSID.length() > 0 &&
       (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
     lastWifiReconnectMs = now;
-    wl_status_t s = WiFi.status();
-    if (s == WL_DISCONNECTED || s == WL_CONNECTION_LOST ||
-        s == WL_NO_SSID_AVAIL || s == WL_CONNECT_FAILED) {
+    if (wifiStat == WL_DISCONNECTED || wifiStat == WL_CONNECTION_LOST ||
+        wifiStat == WL_NO_SSID_AVAIL || wifiStat == WL_CONNECT_FAILED) {
       logV("[WIFI] Reconnexion...");
-      WiFi.disconnect(false);
-      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+      WiFi.disconnect();
+      char ssidBuf[64] = {};
+      wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+      WiFi.begin(ssidBuf, wifiPassword.c_str());
     }
   }
 
@@ -3509,8 +3497,10 @@ void interpreter(String msg){
       wifiPassword = newPass;
       writetosd();
       logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
-      WiFi.disconnect(false);
-      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+      WiFi.disconnect();
+      char ssidBuf[64] = {};
+      wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+      WiFi.begin(ssidBuf, wifiPassword.c_str());
     } else {
       logN("[WIFI] Erreur setwifi : SSID manquant (format : setwifi:SSID:PASSWORD)");
     }
