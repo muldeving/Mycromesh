@@ -298,7 +298,17 @@ server.broadcast_file(filepath: str) -> bool
 server.send_file(filepath: str, target_station: str) -> bool
 ```
 
-### 8.5 Flux de transfert Gate ↔ Serveur
+### 8.5 Fichiers exclus du transfert
+
+Certains fichiers stockés sur la carte SD de la Gate sont **sensibles** et ne doivent **jamais** être transférés, ni vers le réseau LoRa, ni vers/depuis le serveur :
+
+| Fichier | Raison |
+|---------|--------|
+| `/wifi.cfg` | Contient les credentials Wi-Fi (SSID + mot de passe) en clair — toute transmission exposerait ces données sur le réseau |
+
+La Gate refuse explicitement toute tentative de transfert de ces fichiers (commandes `stft`, `diff`, réception `brdl`).
+
+### 8.6 Flux de transfert Gate ↔ Serveur
 
 ```
 Serveur                            Gate
@@ -411,6 +421,23 @@ Le port utilisé par le service Python pour la liaison Gate ↔ Serveur doit êt
 ### 11.3 Authentification Gate
 
 La Gate doit s'authentifier auprès du serveur à chaque connexion (ex. : token partagé, certificat client TLS).
+
+### 11.4 Fichiers sensibles — protection `/wifi.cfg`
+
+Le fichier `/wifi.cfg` stocké sur la carte SD de la Gate contient les credentials Wi-Fi (SSID + mot de passe) en clair. Il est **strictement interdit** de transmettre ce fichier :
+
+- **Via le réseau LoRa** : ni en envoi ciblé (`stft`), ni en diffusion broadcast (`diff` / `brdl`).
+- **Via la liaison Gate ↔ Serveur** : ni en upload vers le serveur, ni en téléchargement depuis le serveur.
+
+**Protection implémentée dans le firmware (gate.ino) :**
+- `parseFile()` — vérifie le chemin en premier appel ; si `path == "/wifi.cfg"`, retourne `false` immédiatement et logue un avertissement.
+- `brdl` handler — vérifie le chemin reçu dans la commande de verrouillage diffusion ; refuse l'entrée en mode broadcast si le fichier est `/wifi.cfg`.
+
+Ces vérifications couvrent tous les points d'entrée actuels de transfert de fichiers. Toute future commande de transfert devra inclure la même vérification.
+
+**Côté serveur (phases suivantes) :**
+- Le service Python devra rejeter toute demande de transfert ciblant `/wifi.cfg` (réception ou envoi).
+- L'interface web de transfert de fichiers (`/files`) ne doit pas permettre de demander ou de télécharger `/wifi.cfg`.
 
 ---
 

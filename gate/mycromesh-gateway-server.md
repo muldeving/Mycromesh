@@ -108,6 +108,7 @@ Le fichier `data.ver` est la référence partagée entre les stations du réseau
 ### Sécurité
 - L'ensemble des liaisons Gate ↔ Serveur et des interfaces web exposées au réseau devront être **chiffrées et sécurisées**.
 - Objectif : limiter la surface d'attaque et protéger contre les accès malveillants.
+- **`/wifi.cfg` est un fichier sensible** (credentials Wi-Fi en clair) : il ne doit **jamais** être transmis sur le réseau LoRa ni vers/depuis le serveur. Cette protection est appliquée dans le firmware (garde dans `parseFile()` et dans le handler `brdl`) et devra l'être également côté serveur (phases suivantes).
 
 ---
 

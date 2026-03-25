@@ -749,6 +749,13 @@ bool invertMatrixGF(uint8_t *mat, uint8_t *inv, int n) {
 // ---------------- PARSE ----------------
 bool parseFile(String path) {
 
+  // SECURITE : /wifi.cfg contient les credentials Wi-Fi — ne jamais transmettre
+  // ce fichier sur le reseau LoRa ni vers/depuis le serveur.
+  if (path == "/wifi.cfg") {
+    logN("[SECURITE] Transfert de /wifi.cfg refuse — fichier sensible (credentials Wi-Fi)");
+    return false;
+  }
+
   logD("parse:start " + path);
   delay(50);
   loraToSD();
@@ -2582,6 +2589,13 @@ void onReceive() {
         if (!broadcastMode) {
           broadcastMode = true;
           broadcastPath = getValue(incoming, ':', 2);
+          // SECURITE : refuser la reception de /wifi.cfg via le reseau
+          if (broadcastPath == "/wifi.cfg") {
+            logN("[SECURITE] Reception de /wifi.cfg via diffusion refusee — fichier sensible");
+            broadcastMode = false;
+            broadcastPath = "";
+            return;
+          }
           lastBroadcastRecv = millis() / 1000;
           lastBrdfSeq = -1;
           // Nettoyage rx.txt et preparation reception (via interpreter, hors ISR)
