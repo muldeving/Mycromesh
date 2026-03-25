@@ -132,31 +132,16 @@ int txcnt = 0;
 // ============================================================
 
 // --- Broches Ethernet LAN8720 ---
-//
-// CONFLIT MATERIEL CONNU — deux problemes independants :
-//
-// 1. GPIO17 (busMuxPin LoRa/SD) vs ETH_CLOCK_GPIO17_OUT (horloge 50 MHz ETH)
-//    Ces deux fonctions sont incompatibles sur la meme pin.
-//    Solution materielle : relier l'entree CLKIN du LAN8720 a GPIO0 et
-//    utiliser ETH_CLOCK_GPIO0_IN (le module LAN8720 fournit sa propre
-//    horloge 25 MHz via son quartz, le driver la propage a GPIO0).
-//    Sur de nombreux modules LAN8720 avec quartz, ETH_CLOCK_GPIO0_IN
-//    est la configuration standard sans conflit.
-//
-// 2. GPIO12 (SPI MISO LoRa/SD) vs ETH_PHY_POWER (controle alimentation PHY)
-//    Si GPIO12 est utilise comme MISO, le driver ETH qui le pilote en
-//    sortie (power enable) provoque un conflit qui fait tourner la tache
-//    ETH en boucle jusqu'au watchdog (TG1WDT_SYS_RESET).
-//    Solution : ETH_PHY_POWER = -1 desactive le controle de puissance
-//    (le LAN8720 est alimente en permanence via son circuit d'alimentation).
-//
+// GPIO12 (SPI MISO LoRa/SD) vs ETH_PHY_POWER :
+//   Si GPIO12 est utilise comme MISO, le driver ETH qui le pilote en sortie
+//   provoque un conflit. ETH_PHY_POWER = -1 desactive le controle de puissance
+//   (le LAN8720 reste alimente en permanence depuis son circuit d'alimentation).
 #define ETH_PHY_ADDR     1
-#define ETH_PHY_POWER    -1              // -1 = pas de controle d'alimentation
-                                         // (evite le conflit avec GPIO12 / SPI MISO)
+#define ETH_PHY_POWER    -1
 #define ETH_PHY_MDC      23
 #define ETH_PHY_MDIO     18
 #define ETH_PHY_TYPE     ETH_PHY_LAN8720
-#define NET_ETH_CLK_MODE ETH_CLOCK_GPIO0_IN  // LAN8720 fournit l'horloge sur GPIO0
+#define NET_ETH_CLK_MODE ETH_CLOCK_GPIO17_OUT
                                               // (evite le conflit avec GPIO17 / busMuxPin)
 
 // --- Credentials Wi-Fi (charges depuis /wifi.cfg sur SD) ---
@@ -171,6 +156,7 @@ NetIface activeIface   = IFACE_NONE;
 
 static unsigned long lastWifiReconnectMs = 0;
 static unsigned long lastNetLogMs        = 0;
+static unsigned long lastNetCheckMs      = 0;
 
 // ============================================================
 
@@ -2174,10 +2160,15 @@ void initNetwork() {
 }
 
 // Surveillance de l'etat reseau et reconnexion automatique.
-// Appellee a chaque iteration de loop() ; les transitions sont detectees
-// par comparison avec les variables ethConnected / wifiConnected.
+// Throttlee a 1 appel/seconde pour eviter de saturer les piles ETH/WiFi
+// (un appel trop frequent de WiFi.status() avec la bibliotheque Arduino
+// WiFi standard peut affamer l'idle task et declencher TG1WDT_SYS_RESET).
 void checkNetworkReconnect() {
   unsigned long now = millis();
+
+  // Throttle : une seule execution par seconde
+  if (now - lastNetCheckMs < 1000UL && now >= lastNetCheckMs) return;
+  lastNetCheckMs = now;
 
   // --- Etat Ethernet (polling via adresse IP) ---
   // ETH.localIP() retourne 0.0.0.0 tant qu'aucune IP n'est obtenue (DHCP).
@@ -2185,7 +2176,6 @@ void checkNetworkReconnect() {
   if (newEthConn != ethConnected) {
     ethConnected = newEthConn;
     if (ethConnected) {
-      // Ethernet (re)connecte : il devient l'interface active (prioritaire)
       activeIface = IFACE_ETH;
       logN("[ETH] IP=" + ETH.localIP().toString());
     } else {
@@ -2199,46 +2189,49 @@ void checkNetworkReconnect() {
       }
     }
   }
-  // Si ETH est revenue alors qu'une autre interface etait active
+  // Retour sur ETH si elle est revenue
   if (ethConnected && activeIface != IFACE_ETH) {
     activeIface = IFACE_ETH;
     logN("[RESEAU] Retour Ethernet — IP=" + ETH.localIP().toString());
   }
 
   // --- Etat Wi-Fi (polling via WiFi.status()) ---
-  // Utilise int pour eviter le conflit de type entre wl_status_t (ESP32)
-  // et uint8_t (bibliotheque Arduino WiFi standard).
-  int wifiStat = (int)WiFi.status();
-  bool newWifiConn = (wifiStat == WL_CONNECTED);
-  if (newWifiConn != wifiConnected) {
-    wifiConnected = newWifiConn;
-    if (wifiConnected) {
-      if (activeIface == IFACE_NONE) {
-        activeIface = IFACE_WIFI;
-        logN("[WIFI] IP=" + WiFi.localIP().toString());
+  // Garde : ne pas appeler WiFi.status() si aucun SSID n'est configure.
+  // Avec la bibliotheque Arduino WiFi standard (shield), l'appel peut
+  // bloquer sur SPI si aucun shield n'est present.
+  if (wifiSSID.length() > 0) {
+    int wifiStat = (int)WiFi.status();
+    bool newWifiConn = (wifiStat == WL_CONNECTED);
+    if (newWifiConn != wifiConnected) {
+      wifiConnected = newWifiConn;
+      if (wifiConnected) {
+        if (activeIface == IFACE_NONE) {
+          activeIface = IFACE_WIFI;
+          logN("[WIFI] IP=" + WiFi.localIP().toString());
+        } else {
+          logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
+        }
       } else {
-        logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
-      }
-    } else {
-      logN("[WIFI] Deconnexion");
-      if (activeIface == IFACE_WIFI) {
-        activeIface = IFACE_NONE;
-        logN("[RESEAU] Aucune interface disponible");
+        logN("[WIFI] Deconnexion");
+        if (activeIface == IFACE_WIFI) {
+          activeIface = IFACE_NONE;
+          logN("[RESEAU] Aucune interface disponible");
+        }
       }
     }
-  }
 
-  // Tentative de reconnexion Wi-Fi toutes les 30 s si liaison perdue
-  if (!wifiConnected && wifiSSID.length() > 0 &&
-      (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
-    lastWifiReconnectMs = now;
-    if (wifiStat == WL_DISCONNECTED || wifiStat == WL_CONNECTION_LOST ||
-        wifiStat == WL_NO_SSID_AVAIL || wifiStat == WL_CONNECT_FAILED) {
-      logV("[WIFI] Reconnexion...");
-      WiFi.disconnect();
-      char ssidBuf[64] = {};
-      wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
-      WiFi.begin(ssidBuf, wifiPassword.c_str());
+    // Tentative de reconnexion Wi-Fi toutes les 30 s si liaison perdue
+    if (!wifiConnected &&
+        (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
+      lastWifiReconnectMs = now;
+      if (wifiStat == WL_DISCONNECTED || wifiStat == WL_CONNECTION_LOST ||
+          wifiStat == WL_NO_SSID_AVAIL || wifiStat == WL_CONNECT_FAILED) {
+        logV("[WIFI] Reconnexion...");
+        WiFi.disconnect();
+        char ssidBuf[64] = {};
+        wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+        WiFi.begin(ssidBuf, wifiPassword.c_str());
+      }
     }
   }
 
