@@ -8,6 +8,8 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <ETH.h>
 Preferences prefs;
 
 ESP32Time rtc;
@@ -124,6 +126,36 @@ int dijkhop = 0;
 int resend1 = 0;
 int resend2 = 0;
 int txcnt = 0;
+
+// ============================================================
+// Phase 1 — Reseau (Wi-Fi + Ethernet LAN8720)
+// ============================================================
+
+// --- Broches Ethernet LAN8720 ---
+// ATTENTION : ETH_CLK_MODE = ETH_CLOCK_GPIO17_OUT place une horloge 50 MHz
+// sur GPIO17, qui est aussi utilise comme busMuxPin (LoRa/SD mux).
+// Un conflit materiel existe — adapter le câblage si necessaire.
+#define ETH_PHY_ADDR     1
+#define ETH_PHY_POWER    12
+#define ETH_PHY_MDC      23
+#define ETH_PHY_MDIO     18
+#define ETH_PHY_TYPE     ETH_PHY_LAN8720
+#define NET_ETH_CLK_MODE ETH_CLOCK_GPIO17_OUT
+
+// --- Credentials Wi-Fi (charges depuis /wifi.cfg sur SD) ---
+String wifiSSID     = "";
+String wifiPassword = "";
+
+// --- Etat des interfaces ---
+bool     ethConnected  = false;
+bool     wifiConnected = false;
+enum NetIface { IFACE_NONE = 0, IFACE_ETH = 1, IFACE_WIFI = 2 };
+NetIface activeIface   = IFACE_NONE;
+
+static unsigned long lastWifiReconnectMs = 0;
+static unsigned long lastNetLogMs        = 0;
+
+// ============================================================
 
 // Variables diffusion reseau (broadcast fichier)
 bool broadcastMode = false;         // Station en mode reception diffusion
@@ -1500,6 +1532,21 @@ void readsd(bool allrecover){
       logD("cron:" + sdtocron);
       crontabString = sdtocron;
 
+      // Lecture credentials Wi-Fi depuis /wifi.cfg (format : SSID:PASSWORD)
+      myFile = SD.open("/wifi.cfg", FILE_READ);
+      if (myFile) {
+        String wificfg = "";
+        while (myFile.available()) wificfg += (char)myFile.read();
+        myFile.close();
+        wificfg = getValue(wificfg, '\n', 0);
+        String tmpSSID = getValue(wificfg, ':', 0);
+        String tmpPass = getValue(wificfg, ':', 1);
+        if (tmpSSID.length() > 0) {
+          wifiSSID     = tmpSSID;
+          wifiPassword = tmpPass;
+        }
+      }
+
       initGaloisField();
 
       sdToLora();
@@ -1563,6 +1610,17 @@ void writetosd(){
     }
     else{
       logN("[ERREUR SD] Impossible d'ecrire /crontab.cfg");
+    }
+
+    // Sauvegarde credentials Wi-Fi dans /wifi.cfg (format : SSID:PASSWORD)
+    if (wifiSSID.length() > 0) {
+      testFile = SD.open("/wifi.cfg", FILE_WRITE);
+      if (testFile) {
+        testFile.println(wifiSSID + ":" + wifiPassword);
+        testFile.close();
+      } else {
+        logN("[ERREUR SD] Impossible d'ecrire /wifi.cfg");
+      }
     }
 
     String varetosd;
@@ -2064,6 +2122,133 @@ bool doFirmwareUpdate() {
   return true;
 }
 
+// ============================================================
+// Phase 1 — Fonctions reseau
+// ============================================================
+
+// Retourne l'adresse IP de l'interface active, ou "" si aucune.
+String getLocalIP() {
+  if (activeIface == IFACE_ETH)  return ETH.localIP().toString();
+  if (activeIface == IFACE_WIFI) return WiFi.localIP().toString();
+  return "";
+}
+
+// Gestionnaire d'evenements reseau (ETH + Wi-Fi).
+void onNetEvent(WiFiEvent_t event) {
+  switch (event) {
+
+    case ARDUINO_EVENT_ETH_START:
+      logN("[ETH] Demarrage...");
+      ETH.setHostname("mycromesh-gate");
+      break;
+
+    case ARDUINO_EVENT_ETH_CONNECTED:
+      logN("[ETH] Liaison physique etablie");
+      break;
+
+    case ARDUINO_EVENT_ETH_GOT_IP:
+      ethConnected = true;
+      activeIface  = IFACE_ETH;   // Ethernet est prioritaire
+      logN("[ETH] IP=" + ETH.localIP().toString() +
+           " vitesse=" + String(ETH.linkSpeed()) + "Mbps" +
+           " duplex=" + String(ETH.fullDuplex() ? "full" : "half"));
+      break;
+
+    case ARDUINO_EVENT_ETH_LOST_IP:
+    case ARDUINO_EVENT_ETH_DISCONNECTED:
+      logN("[ETH] Liaison perdue");
+      ethConnected = false;
+      if (activeIface == IFACE_ETH) {
+        if (wifiConnected) {
+          activeIface = IFACE_WIFI;
+          logN("[RESEAU] Bascule Wi-Fi — IP=" + WiFi.localIP().toString());
+        } else {
+          activeIface = IFACE_NONE;
+          logN("[RESEAU] Aucune interface disponible");
+        }
+      }
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      logV("[WIFI] Associe a " + wifiSSID);
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiConnected = true;
+      if (activeIface == IFACE_NONE) {
+        activeIface = IFACE_WIFI;
+        logN("[WIFI] IP=" + WiFi.localIP().toString());
+      } else {
+        // Ethernet deja actif : Wi-Fi en standby
+        logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
+      }
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      logN("[WIFI] Deconnexion");
+      wifiConnected = false;
+      if (activeIface == IFACE_WIFI) {
+        activeIface = IFACE_NONE;
+        logN("[RESEAU] Aucune interface disponible");
+      }
+      break;
+
+    default:
+      break;
+  }
+}
+
+// Initialise Ethernet et Wi-Fi simultanement.
+// A appeler depuis setup() apres readsd() pour disposer des credentials.
+void initNetwork() {
+  WiFi.onEvent(onNetEvent);
+
+  // Demarrage Ethernet LAN8720
+  ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER, ETH_PHY_MDC, ETH_PHY_MDIO,
+            ETH_PHY_TYPE, NET_ETH_CLK_MODE);
+
+  // Demarrage Wi-Fi si les credentials sont configures
+  if (wifiSSID.length() > 0) {
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    logN("[WIFI] Connexion a '" + wifiSSID + "'...");
+  } else {
+    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
+  }
+}
+
+// Gestion de la reconnexion automatique.
+// A appeler periodiquement depuis loop().
+void checkNetworkReconnect() {
+  unsigned long now = millis();
+
+  // Tentative de reconnexion Wi-Fi toutes les 30 s si la liaison est perdue
+  if (!wifiConnected && wifiSSID.length() > 0 &&
+      (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
+    lastWifiReconnectMs = now;
+    wl_status_t s = WiFi.status();
+    if (s == WL_DISCONNECTED || s == WL_CONNECTION_LOST ||
+        s == WL_NO_SSID_AVAIL || s == WL_CONNECT_FAILED) {
+      logV("[WIFI] Reconnexion...");
+      WiFi.disconnect(false);
+      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    }
+  }
+
+  // Log periodique d'etat (toutes les 5 min, niveau verbose)
+  if (serialLevel >= LOG_VERBOSE &&
+      (now - lastNetLogMs > 300000UL || now < lastNetLogMs)) {
+    lastNetLogMs = now;
+    if      (activeIface == IFACE_ETH)  logV("[RESEAU] ETH  ip=" + getLocalIP());
+    else if (activeIface == IFACE_WIFI) logV("[RESEAU] WIFI ip=" + getLocalIP());
+    else                                logV("[RESEAU] Aucune interface active");
+  }
+}
+
+// ============================================================
+
 // --- CPU Frequency Scaling ---
 
 void setup() {
@@ -2102,6 +2287,9 @@ void setup() {
 
 
   logN("[OK] Noeud #" + String(localAddress) + " demarre - firmware " + FIRMWARE_VERSION);
+
+  // Initialisation reseau (Wi-Fi + Ethernet) — Phase 1
+  initNetwork();
 
   // Si ce demarrage fait suite a une mise a jour OTA, planifie la diffusion de la version
   // firmware a l'ensemble du reseau 30 secondes apres le boot
@@ -2202,6 +2390,9 @@ void loop() {
   togatePurgeOld();
   purgeToOldFile();
   removeExpiredValues();
+
+  // Surveillance et reconnexion reseau (Phase 1)
+  checkNetworkReconnect();
 
 }
 
@@ -3289,4 +3480,39 @@ void interpreter(String msg){
         ioOutput("[NETIO] Tunnel reseau ferme");
       }
     }
+
+  // ----------------------------------------------------------------
+  // Phase 1 — Commandes reseau
+  // ----------------------------------------------------------------
+
+  // netstat : affiche l'etat des interfaces ETH et Wi-Fi
+  if (cmd == "netstat") {
+    String iface;
+    if      (activeIface == IFACE_ETH)  iface = "ETH";
+    else if (activeIface == IFACE_WIFI) iface = "WIFI";
+    else                                iface = "NONE";
+    logN("[RESEAU] Interface active : " + iface + "  IP=" + getLocalIP());
+    logN("[ETH]   connecte=" + String(ethConnected ? "oui" : "non") +
+         "  IP=" + (ethConnected ? ETH.localIP().toString() : "-"));
+    logN("[WIFI]  connecte=" + String(wifiConnected ? "oui" : "non") +
+         "  SSID=" + (wifiSSID.length() > 0 ? wifiSSID : "(non configure)") +
+         "  IP=" + (wifiConnected ? WiFi.localIP().toString() : "-"));
+  }
+
+  // setwifi : configure les credentials Wi-Fi et reconnecte
+  // Format : setwifi:SSID:PASSWORD
+  if (cmd == "setwifi") {
+    String newSSID = getValue(msg, ':', 1);
+    String newPass = getValue(msg, ':', 2);
+    if (newSSID.length() > 0) {
+      wifiSSID     = newSSID;
+      wifiPassword = newPass;
+      writetosd();
+      logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
+      WiFi.disconnect(false);
+      WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
+    } else {
+      logN("[WIFI] Erreur setwifi : SSID manquant (format : setwifi:SSID:PASSWORD)");
+    }
+  }
 }
