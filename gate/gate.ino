@@ -2155,15 +2155,14 @@ void initNetwork() {
   ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
 
-  // Demarrage Wi-Fi differe : ETH.begin() utilise le sous-systeme radio WiFi
-  // de l'ESP32 durant son initialisation. Appeler WiFi.begin() immediatement
-  // provoque "sta is connecting, return error" car le radio n'est pas libre.
-  // La connexion Wi-Fi est donc deleguee a checkNetworkReconnect() qui se
-  // declenchera ~5 s apres le boot, une fois ETH stabilise.
+  // Demarrage Wi-Fi differe : le LAN8720 effectue sa negociation MDIO en
+  // arriere-plan pendant ~40-60 s (meme sans cable), ce qui perturbe le stack
+  // WiFi si WiFi.begin() est appele trop tot.
+  // La premiere tentative est planifiee 30 s apres le boot (= delai par defaut
+  // de checkNetworkReconnect), ce qui laisse ETH se stabiliser.
   if (wifiSSID.length() > 0) {
-    // Force le premier essai dans ~5 s (au lieu de 30 s par defaut)
-    lastWifiReconnectMs = millis() - 25000UL;
-    logN("[WIFI] Connexion a '" + wifiSSID + "' dans ~5 s (attente stabilisation ETH)...");
+    lastWifiReconnectMs = millis();  // premier essai dans 30 s
+    logN("[WIFI] Connexion a '" + wifiSSID + "' dans ~30 s (attente stabilisation ETH)...");
   } else {
     logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
   }
@@ -2231,6 +2230,7 @@ void checkNetworkReconnect() {
       // WiFi.disconnect() gere tous les etats intermediaires (y compris WL_IDLE_STATUS
       // avant le premier WiFi.begin()), la verification du statut est donc inutile.
       logV("[WIFI] Reconnexion...");
+      WiFi.mode(WIFI_STA);
       WiFi.disconnect();
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
@@ -3517,6 +3517,7 @@ void interpreter(String msg){
       wifiPassword = newPass;
       writetosd();
       logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
+      WiFi.mode(WIFI_STA);
       WiFi.disconnect();
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
