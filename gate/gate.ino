@@ -2155,16 +2155,15 @@ void initNetwork() {
   ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
 
-  // Demarrage Wi-Fi si les credentials sont configures
-  // WiFi.disconnect() est necessaire : ETH.begin() initialise le sous-systeme
-  // WiFi en interne, ce qui laisse le stack dans un etat "connecting" intermittent.
-  // Sans ce reset, WiFi.begin() echoue avec "sta is connecting, return error".
+  // Demarrage Wi-Fi differe : ETH.begin() utilise le sous-systeme radio WiFi
+  // de l'ESP32 durant son initialisation. Appeler WiFi.begin() immediatement
+  // provoque "sta is connecting, return error" car le radio n'est pas libre.
+  // La connexion Wi-Fi est donc deleguee a checkNetworkReconnect() qui se
+  // declenchera ~5 s apres le boot, une fois ETH stabilise.
   if (wifiSSID.length() > 0) {
-    WiFi.disconnect();
-    char ssidBuf[64] = {};
-    wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
-    WiFi.begin(ssidBuf, wifiPassword.c_str());
-    logN("[WIFI] Connexion a '" + wifiSSID + "'...");
+    // Force le premier essai dans ~5 s (au lieu de 30 s par defaut)
+    lastWifiReconnectMs = millis() - 25000UL;
+    logN("[WIFI] Connexion a '" + wifiSSID + "' dans ~5 s (attente stabilisation ETH)...");
   } else {
     logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
   }
