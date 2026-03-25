@@ -2228,14 +2228,13 @@ void checkNetworkReconnect() {
     if (!wifiConnected &&
         (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
       lastWifiReconnectMs = now;
-      if (wifiStat == WL_DISCONNECTED || wifiStat == WL_CONNECTION_LOST ||
-          wifiStat == WL_NO_SSID_AVAIL || wifiStat == WL_CONNECT_FAILED) {
-        logV("[WIFI] Reconnexion...");
-        WiFi.disconnect();
-        char ssidBuf[64] = {};
-        wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
-        WiFi.begin(ssidBuf, wifiPassword.c_str());
-      }
+      // WiFi.disconnect() gere tous les etats intermediaires (y compris WL_IDLE_STATUS
+      // avant le premier WiFi.begin()), la verification du statut est donc inutile.
+      logV("[WIFI] Reconnexion...");
+      WiFi.disconnect();
+      char ssidBuf[64] = {};
+      wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+      WiFi.begin(ssidBuf, wifiPassword.c_str());
     }
   }
 
