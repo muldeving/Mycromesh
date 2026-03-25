@@ -2145,6 +2145,7 @@ void initNetwork() {
   // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
   ETH.begin(ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO,
             ETH_PHY_POWER, NET_ETH_CLK_MODE);
+  ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
 
   // Demarrage Wi-Fi si les credentials sont configures
