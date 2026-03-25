@@ -2156,7 +2156,11 @@ void initNetwork() {
   logN("[ETH] Initialisation LAN8720...");
 
   // Demarrage Wi-Fi si les credentials sont configures
+  // WiFi.disconnect() est necessaire : ETH.begin() initialise le sous-systeme
+  // WiFi en interne, ce qui laisse le stack dans un etat "connecting" intermittent.
+  // Sans ce reset, WiFi.begin() echoue avec "sta is connecting, return error".
   if (wifiSSID.length() > 0) {
+    WiFi.disconnect();
     char ssidBuf[64] = {};
     wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
     WiFi.begin(ssidBuf, wifiPassword.c_str());
