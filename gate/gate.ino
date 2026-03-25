@@ -132,15 +132,32 @@ int txcnt = 0;
 // ============================================================
 
 // --- Broches Ethernet LAN8720 ---
-// ATTENTION : ETH_CLK_MODE = ETH_CLOCK_GPIO17_OUT place une horloge 50 MHz
-// sur GPIO17, qui est aussi utilise comme busMuxPin (LoRa/SD mux).
-// Un conflit materiel existe — adapter le câblage si necessaire.
+//
+// CONFLIT MATERIEL CONNU — deux problemes independants :
+//
+// 1. GPIO17 (busMuxPin LoRa/SD) vs ETH_CLOCK_GPIO17_OUT (horloge 50 MHz ETH)
+//    Ces deux fonctions sont incompatibles sur la meme pin.
+//    Solution materielle : relier l'entree CLKIN du LAN8720 a GPIO0 et
+//    utiliser ETH_CLOCK_GPIO0_IN (le module LAN8720 fournit sa propre
+//    horloge 25 MHz via son quartz, le driver la propage a GPIO0).
+//    Sur de nombreux modules LAN8720 avec quartz, ETH_CLOCK_GPIO0_IN
+//    est la configuration standard sans conflit.
+//
+// 2. GPIO12 (SPI MISO LoRa/SD) vs ETH_PHY_POWER (controle alimentation PHY)
+//    Si GPIO12 est utilise comme MISO, le driver ETH qui le pilote en
+//    sortie (power enable) provoque un conflit qui fait tourner la tache
+//    ETH en boucle jusqu'au watchdog (TG1WDT_SYS_RESET).
+//    Solution : ETH_PHY_POWER = -1 desactive le controle de puissance
+//    (le LAN8720 est alimente en permanence via son circuit d'alimentation).
+//
 #define ETH_PHY_ADDR     1
-#define ETH_PHY_POWER    12
+#define ETH_PHY_POWER    -1              // -1 = pas de controle d'alimentation
+                                         // (evite le conflit avec GPIO12 / SPI MISO)
 #define ETH_PHY_MDC      23
 #define ETH_PHY_MDIO     18
 #define ETH_PHY_TYPE     ETH_PHY_LAN8720
-#define NET_ETH_CLK_MODE ETH_CLOCK_GPIO17_OUT
+#define NET_ETH_CLK_MODE ETH_CLOCK_GPIO0_IN  // LAN8720 fournit l'horloge sur GPIO0
+                                              // (evite le conflit avec GPIO17 / busMuxPin)
 
 // --- Credentials Wi-Fi (charges depuis /wifi.cfg sur SD) ---
 String wifiSSID     = "";
