@@ -2138,13 +2138,8 @@ String getLocalIP() {
   return "";
 }
 
-// Initialise Ethernet et Wi-Fi.
+// Initialise Ethernet et Wi-Fi simultanement.
 // A appeler depuis setup() apres readsd() pour disposer des credentials.
-// NOTE : les appels WiFi API (WiFi.begin / WiFi.status) sont desactives
-// car la bibliotheque Arduino WiFi standard (WiFi Shield) est incompatible
-// avec le hardware ESP32 et provoque un TG1WDT_SYS_RESET immediat.
-// Pour activer le Wi-Fi : installer la lib ESP32 WiFi correcte et retirer
-// "C:\Program Files (x86)\Arduino\libraries\WiFi" ou utiliser PlatformIO.
 void initNetwork() {
   // Demarrage Ethernet LAN8720
   // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
@@ -2152,11 +2147,14 @@ void initNetwork() {
             ETH_PHY_POWER, NET_ETH_CLK_MODE);
   logN("[ETH] Initialisation LAN8720...");
 
-  // Wi-Fi desactive (conflit bibliotheque — voir note ci-dessus)
+  // Demarrage Wi-Fi si les credentials sont configures
   if (wifiSSID.length() > 0) {
-    logN("[WIFI] Credentials en memoire (SSID=" + wifiSSID + ") — Wi-Fi desactive, conflit bibliotheque");
+    char ssidBuf[64] = {};
+    wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+    WiFi.begin(ssidBuf, wifiPassword.c_str());
+    logN("[WIFI] Connexion a '" + wifiSSID + "'...");
   } else {
-    logN("[WIFI] Pas de SSID configure");
+    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
   }
 }
 
@@ -2179,8 +2177,53 @@ void checkNetworkReconnect() {
     } else {
       logN("[ETH] Liaison perdue");
       if (activeIface == IFACE_ETH) {
-        activeIface = IFACE_NONE;
-        logN("[RESEAU] Aucune interface disponible");
+        activeIface = wifiConnected ? IFACE_WIFI : IFACE_NONE;
+        if (activeIface == IFACE_WIFI)
+          logN("[RESEAU] Bascule Wi-Fi — IP=" + WiFi.localIP().toString());
+        else
+          logN("[RESEAU] Aucune interface disponible");
+      }
+    }
+  }
+  // Retour sur ETH si elle est revenue
+  if (ethConnected && activeIface != IFACE_ETH) {
+    activeIface = IFACE_ETH;
+    logN("[RESEAU] Retour Ethernet — IP=" + ETH.localIP().toString());
+  }
+
+  // --- Etat Wi-Fi (polling via WiFi.status()) ---
+  if (wifiSSID.length() > 0) {
+    int wifiStat = (int)WiFi.status();
+    bool newWifiConn = (wifiStat == WL_CONNECTED);
+    if (newWifiConn != wifiConnected) {
+      wifiConnected = newWifiConn;
+      if (wifiConnected) {
+        if (activeIface == IFACE_NONE) {
+          activeIface = IFACE_WIFI;
+          logN("[WIFI] IP=" + WiFi.localIP().toString());
+        } else {
+          logV("[WIFI] IP=" + WiFi.localIP().toString() + " (standby — ETH prioritaire)");
+        }
+      } else {
+        logN("[WIFI] Deconnexion");
+        if (activeIface == IFACE_WIFI) {
+          activeIface = IFACE_NONE;
+          logN("[RESEAU] Aucune interface disponible");
+        }
+      }
+    }
+
+    // Tentative de reconnexion Wi-Fi toutes les 30 s si liaison perdue
+    if (!wifiConnected &&
+        (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
+      lastWifiReconnectMs = now;
+      if (wifiStat == WL_DISCONNECTED || wifiStat == WL_CONNECTION_LOST ||
+          wifiStat == WL_NO_SSID_AVAIL || wifiStat == WL_CONNECT_FAILED) {
+        logV("[WIFI] Reconnexion...");
+        WiFi.disconnect();
+        char ssidBuf[64] = {};
+        wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+        WiFi.begin(ssidBuf, wifiPassword.c_str());
       }
     }
   }
@@ -2189,8 +2232,9 @@ void checkNetworkReconnect() {
   if (serialLevel >= LOG_VERBOSE &&
       (now - lastNetLogMs > 300000UL || now < lastNetLogMs)) {
     lastNetLogMs = now;
-    if (activeIface == IFACE_ETH) logV("[RESEAU] ETH  ip=" + getLocalIP());
-    else                          logV("[RESEAU] Aucune interface active");
+    if      (activeIface == IFACE_ETH)  logV("[RESEAU] ETH  ip=" + getLocalIP());
+    else if (activeIface == IFACE_WIFI) logV("[RESEAU] WIFI ip=" + getLocalIP());
+    else                                logV("[RESEAU] Aucune interface active");
   }
 }
 
@@ -3455,10 +3499,11 @@ void interpreter(String msg){
       wifiSSID     = newSSID;
       wifiPassword = newPass;
       writetosd();
-      // Wi-Fi API desactivee (conflit bibliotheque Arduino WiFi standard).
-      // Les credentials sont sauvegardes et seront utilises des que
-      // la bibliotheque correcte sera installee.
-      logN("[WIFI] Credentials sauvegardes — SSID=" + wifiSSID + " (Wi-Fi desactive, conflit lib)");
+      logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
+      WiFi.disconnect();
+      char ssidBuf[64] = {};
+      wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
+      WiFi.begin(ssidBuf, wifiPassword.c_str());
     } else {
       logN("[WIFI] Erreur setwifi : SSID manquant (format : setwifi:SSID:PASSWORD)");
     }
