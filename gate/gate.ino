@@ -1552,6 +1552,8 @@ void readsd(bool allrecover){
         wificfg = getValue(wificfg, '\n', 0);
         String tmpSSID = getValue(wificfg, ':', 0);
         String tmpPass = getValue(wificfg, ':', 1);
+        tmpSSID.trim();
+        tmpPass.trim();
         if (tmpSSID.length() > 0) {
           wifiSSID     = tmpSSID;
           wifiPassword = tmpPass;
@@ -1627,7 +1629,7 @@ void writetosd(){
     if (wifiSSID.length() > 0) {
       testFile = SD.open("/wifi.cfg", FILE_WRITE);
       if (testFile) {
-        testFile.println(wifiSSID + ":" + wifiPassword);
+        testFile.print(wifiSSID + ":" + wifiPassword);
         testFile.close();
       } else {
         logN("[ERREUR SD] Impossible d'ecrire /wifi.cfg");
