@@ -2241,6 +2241,7 @@ void checkNetworkReconnect() {
       wifiStarted = true;
       logN("[WIFI] Connexion a '" + wifiSSID + "'...");
       WiFi.persistent(false);   // ne pas charger/sauver credentials en flash
+      WiFi.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
       WiFi.mode(WIFI_STA);
       WiFi.disconnect();
       WiFi.setAutoReconnect(true);
@@ -3531,6 +3532,7 @@ void interpreter(String msg){
       logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
       wifiStarted = true;  // marque comme demarre pour ne pas rappeler begin() dans checkNetworkReconnect
       WiFi.persistent(false);
+      WiFi.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
       WiFi.mode(WIFI_STA);
       WiFi.disconnect();
       WiFi.setAutoReconnect(true);
