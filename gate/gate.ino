@@ -2149,6 +2149,18 @@ String getLocalIP() {
 // Initialise Ethernet et Wi-Fi simultanement.
 // A appeler depuis setup() apres readsd() pour disposer des credentials.
 void initNetwork() {
+  // Callback d'evenements WiFi (diagnostic) — log la raison de deconnexion
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+      Serial.println("[WIFI-EVT] Deconnexion reason=" +
+                     String(info.wifi_sta_disconnected.reason));
+    } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+      Serial.println("[WIFI-EVT] Associe au AP");
+    } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+      Serial.println("[WIFI-EVT] IP obtenue");
+    }
+  });
+
   // Ethernet LAN8720
   // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
   ETH.begin(ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO,
@@ -2156,15 +2168,12 @@ void initNetwork() {
   ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
 
-  // WiFi.begin() est appele depuis loop() via checkNetworkReconnect() apres
-  // un delai de 2 s, une fois que les taches FreeRTOS du stack WiFi sont
-  // pleinement operationnelles. L'appeler depuis setup() echoue silencieusement.
   if (wifiSSID.length() > 0) {
-    lastWifiReconnectMs = millis() - 28000UL;  // premier essai dans ~2 s
+    lastWifiReconnectMs = millis() - 28000UL;  // premier essai quasi-immediat
     logN("[WIFI] Demarrage dans ~2 s...");
   } else {
     logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
-    wifiStarted = true;  // rien a demarrer
+    wifiStarted = true;
   }
 }
 
