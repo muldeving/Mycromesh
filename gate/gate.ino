@@ -2149,28 +2149,23 @@ String getLocalIP() {
 // Initialise Ethernet et Wi-Fi simultanement.
 // A appeler depuis setup() apres readsd() pour disposer des credentials.
 void initNetwork() {
-  // WiFi AVANT ETH : en ESP32 Arduino v3.x, initialiser ETH en premier
-  // modifie l'etat interne du stack WiFi et empeche WiFi.begin() de connecter.
-  // L'ordre correct pour l'operation simultanee ETH + WiFi est WiFi d'abord.
-  if (wifiSSID.length() > 0) {
-    wifiStarted = true;
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.disconnect();
-    char ssidBuf[64] = {};
-    wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
-    WiFi.begin(ssidBuf, wifiPassword.c_str());
-    logN("[WIFI] Connexion a '" + wifiSSID + "'...");
-  } else {
-    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
-  }
-
-  // Ethernet LAN8720 (apres WiFi)
+  // Ethernet LAN8720
   // Signature ESP32 core v3.x.x : begin(type, phy_addr, mdc, mdio, power, clk_mode)
   ETH.begin(ETH_PHY_TYPE, ETH_PHY_ADDR, ETH_PHY_MDC, ETH_PHY_MDIO,
             ETH_PHY_POWER, NET_ETH_CLK_MODE);
   ETH.setHostname(("MycroMesh-Gate-" + String(localAddress)).c_str());
   logN("[ETH] Initialisation LAN8720...");
+
+  // WiFi.begin() est appele depuis loop() via checkNetworkReconnect() apres
+  // un delai de 2 s, une fois que les taches FreeRTOS du stack WiFi sont
+  // pleinement operationnelles. L'appeler depuis setup() echoue silencieusement.
+  if (wifiSSID.length() > 0) {
+    lastWifiReconnectMs = millis() - 28000UL;  // premier essai dans ~2 s
+    logN("[WIFI] Demarrage dans ~2 s...");
+  } else {
+    logN("[WIFI] Pas de SSID configure (voir commande setwifi)");
+    wifiStarted = true;  // rien a demarrer
+  }
 }
 
 // Surveillance de l'etat reseau et reconnexion automatique.
@@ -2228,15 +2223,15 @@ void checkNetworkReconnect() {
       }
     }
 
-    // Premier demarrage Wi-Fi : differe de 30 s pour laisser ETH se stabiliser.
-    // WiFi.begin() est appele UNE SEULE FOIS. La reconnexion automatique est
-    // geree par WiFi.setAutoReconnect(true) — on n'appelle jamais begin() a
-    // nouveau dans cette boucle pour ne pas interrompre une connexion en cours.
+    // Premier demarrage Wi-Fi depuis loop() (RTOS pleinement operationnel).
+    // WiFi.begin() appele UNE SEULE FOIS ; setAutoReconnect gere la suite.
     if (!wifiStarted &&
         (now - lastWifiReconnectMs > 30000UL || now < lastWifiReconnectMs)) {
       wifiStarted = true;
-      logN("[WIFI] Demarrage connexion...");
+      logN("[WIFI] Connexion a '" + wifiSSID + "'...");
+      WiFi.persistent(false);   // ne pas charger/sauver credentials en flash
       WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
       WiFi.setAutoReconnect(true);
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
@@ -3524,9 +3519,10 @@ void interpreter(String msg){
       writetosd();
       logN("[WIFI] Credentials mis a jour — SSID=" + wifiSSID);
       wifiStarted = true;  // marque comme demarre pour ne pas rappeler begin() dans checkNetworkReconnect
+      WiFi.persistent(false);
       WiFi.mode(WIFI_STA);
-      WiFi.setAutoReconnect(true);
       WiFi.disconnect();
+      WiFi.setAutoReconnect(true);
       char ssidBuf[64] = {};
       wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
       WiFi.begin(ssidBuf, wifiPassword.c_str());
