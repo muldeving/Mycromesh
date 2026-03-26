@@ -3520,6 +3520,49 @@ void interpreter(String msg){
          "  IP=" + (wifiConnected ? WiFi.localIP().toString() : "-"));
   }
 
+  // nettest : test fonctionnel detaille des interfaces reseau
+  if (cmd == "nettest") {
+    logN("[NETTEST] ===== Ethernet =====");
+    if (ethConnected) {
+      logN("[NETTEST] ETH : UP");
+      logN("[NETTEST]   IP      = " + ETH.localIP().toString());
+      logN("[NETTEST]   GW      = " + ETH.gatewayIP().toString());
+      logN("[NETTEST]   Subnet  = " + ETH.subnetMask().toString());
+      logN("[NETTEST]   DNS     = " + ETH.dnsIP().toString());
+      logN("[NETTEST]   MAC     = " + ETH.macAddress());
+    } else {
+      logN("[NETTEST] ETH : DOWN");
+    }
+    logN("[NETTEST] ===== Wi-Fi =====");
+    if (wifiConnected) {
+      logN("[NETTEST] WIFI : UP");
+      logN("[NETTEST]   SSID    = " + WiFi.SSID());
+      logN("[NETTEST]   IP      = " + WiFi.localIP().toString());
+      logN("[NETTEST]   GW      = " + WiFi.gatewayIP().toString());
+      logN("[NETTEST]   Subnet  = " + WiFi.subnetMask().toString());
+      logN("[NETTEST]   DNS     = " + WiFi.dnsIP().toString());
+      logN("[NETTEST]   MAC     = " + WiFi.macAddress());
+      logN("[NETTEST]   RSSI    = " + String(WiFi.RSSI()) + " dBm  ch=" + String(WiFi.channel()));
+    } else if (wifiSSID.length() > 0) {
+      logN("[NETTEST] WIFI : DOWN  (SSID cible='" + wifiSSID + "'  status=" + String((int)WiFi.status()) + ")");
+    } else {
+      logN("[NETTEST] WIFI : non configure");
+    }
+    logN("[NETTEST] ===== Connectivite =====");
+    if (activeIface != IFACE_NONE) {
+      IPAddress dnsResult;
+      logN("[NETTEST] Resolution DNS 'google.com'...");
+      int dnsRet = WiFi.hostByName("google.com", dnsResult);
+      if (dnsRet == 1) {
+        logN("[NETTEST] DNS OK -> " + dnsResult.toString());
+      } else {
+        logN("[NETTEST] DNS ECHEC (ret=" + String(dnsRet) + ")");
+      }
+    } else {
+      logN("[NETTEST] Aucune interface active — test connectivite impossible");
+    }
+  }
+
   // setwifi : configure les credentials Wi-Fi et reconnecte
   // Format : setwifi:SSID:PASSWORD
   if (cmd == "setwifi") {
