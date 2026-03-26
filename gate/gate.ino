@@ -2156,6 +2156,7 @@ void initNetwork() {
     wifiStarted = true;
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
+    WiFi.disconnect();
     char ssidBuf[64] = {};
     wifiSSID.toCharArray(ssidBuf, sizeof(ssidBuf));
     WiFi.begin(ssidBuf, wifiPassword.c_str());
